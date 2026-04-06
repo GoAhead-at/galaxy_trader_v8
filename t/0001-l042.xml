@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <language id="42">
   <page id="77000" title="GalaxyTrader MK3" descr="GalaxyTrader MK3 Localization" voice="no">
-    <t id="10001">Dock and Wait (GalaxyTrader MK3)</t>
+    <t id="10001">Ukotvit a počkat (GalaxyTrader MK3)</t>
     <t id="10002">GalaxyTrader MK3</t>
     <t id="10003">Závěrečná zkouška (GalaxyTrader MK3)</t>
     <t id="10004">Pilotní výměna Rendezvous</t>
