@@ -630,8 +630,8 @@
           </do_all>
           
           <!-- Re-sort combined list by gate distance (equipment docks + wharfs + shipyards merged). -->
-          <!-- Keep unreachable stations in list; native sort places them after reachable stations. -->
-          <sort_list list="$potentialStations" sortbygatedistanceto="$ship"/>
+          <!-- sort_list only supports sortbyvalue (not sortbygatedistanceto); match vanilla gatedistance sort. Unreachable (-1) sorted last. -->
+          <sort_list list="$potentialStations" sortbyvalue="if $ship.gatedistance.{loop.element} lt 0 then 9999 else $ship.gatedistance.{loop.element}"/>
           
           <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
             <debug_text text="'[GT-Maintenance] (' + $ship.idcode + ') Found ' + $potentialStations.count + ' potential equipment stations (equipment docks + wharfs + shipyards, sorted by distance)'" chance="100"/>

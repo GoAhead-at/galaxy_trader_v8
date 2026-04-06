@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<aiscript name="order.mining.routine.gt" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../stock_game/X4 Foundations/libraries/aiscripts.xsd" version="28">
+<aiscript name="order.mining.routine.gt" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../stock_game/X4 Foundations/libraries/aiscripts.xsd" version="29">
   <!--
   This script will try to automatically supply stations and will only work with
   a valid warebasket parameter (defined via jobs). It can do gas and mineral
@@ -138,7 +138,7 @@
     </do_elseif>
 
     <set_value name="$time_start" exact="player.age"/>
-    <do_if value="(this.assignedcontrolled.order.id == 'MiningRoutine') or (this.assignedcontrolled.order.id == 'MiningRoutine_Basic') or (this.assignedcontrolled.order.id == 'MiningRoutine_Advanced') or (this.assignedcontrolled.order.id == 'MiningRoutine_Expert')">
+    <do_if value="(this.assignedcontrolled.order.id == 'MiningRoutine') or (this.assignedcontrolled.order.id == 'MiningRoutine_Basic') or (this.assignedcontrolled.order.id == 'MiningRoutine_Advanced') or (this.assignedcontrolled.order.id == 'MiningRoutine_Expert') or (this.assignedcontrolled.order.id == 'MiningRoutine_GT')">
       <set_value name="$thisorder" exact="this.assignedcontrolled.order"/>
     </do_if>
 
@@ -150,8 +150,50 @@
     <do_if value="$endtime">
       <set_value name="$duration" exact="$endtime - player.age" comment="can be negative"/>
     </do_if>
-    <!-- Match vanilla order.mining.routine.xml: yield *rating* threshold for find_closest_resource / find_resource in-sector. -->
-    <set_value name="$minrating" exact="3"/>
+
+    <do_if value="this.isplayerowned">
+      <set_value name="$maxrange" exact="[@this.assignedcontrolled.commander.tradenpc.skill.management, @this.assignedcontrolled.pilot.skill.piloting].max / 3"/>
+      <do_if value="$effectiveskill == 100">
+        <set_value name="$maxrange" exact="$maxrange * 3"/>
+      </do_if>
+      <do_if value="$minbuy gt [$maxrange - 1, 0].max">
+        <set_value name="$minbuy" exact="[$maxrange - 1, 0].max"/>
+        <do_if value="@$thisorder.exists">
+          <edit_order_param order="this.assignedcontrolled.order" param="'minbuy'" value="$minbuy"/>
+        </do_if>
+      </do_if>
+      <do_if value="$minsell gt [$maxrange - 1, 0].max">
+        <set_value name="$minsell" exact="[$maxrange - 1, 0].max"/>
+        <do_if value="@$thisorder.exists">
+          <edit_order_param order="this.assignedcontrolled.order" param="'minsell'" value="$minsell"/>
+        </do_if>
+      </do_if>
+      <do_if value="$maxsell gt $maxrange">
+        <set_value name="$maxsell" exact="$maxrange"/>
+        <do_if value="@$thisorder.exists">
+          <edit_order_param order="this.assignedcontrolled.order" param="'maxsell'" value="$maxsell"/>
+        </do_if>
+      </do_if>
+
+      <do_if value="not @$homebase.isoperational">
+        <do_if value="$maxbuy gt $maxrange">
+          <set_value name="$maxbuy" exact="$maxrange"/>
+          <do_if value="@$thisorder.exists">
+            <edit_order_param order="this.assignedcontrolled.order" param="'maxbuy'" value="$maxbuy"/>
+          </do_if>
+        </do_if>
+      </do_if>
+      <do_else>
+        <!-- station-based miners always harvest at their maximum range. changing maxsell won't do anything since they'll always only offload at their own station. -->
+        <do_if value="$maxbuy != $maxrange">
+          <set_value name="$maxbuy" exact="$maxrange"/>
+          <do_if value="@$thisorder.exists">
+            <edit_order_param order="this.assignedcontrolled.order" param="'maxbuy'" value="$maxbuy"/>
+          </do_if>
+        </do_if>
+      </do_else>
+      <remove_value name="$maxrange"/>
+    </do_if>
   </init>
   <patch sinceversion="2">
     <do_if value="$minbuy == -1">
@@ -175,8 +217,30 @@
       <set_value name="$minsell" exact="0"/>
     </do_if>
   </patch>
+  <patch sinceversion="3">
+    <do_if value="this.isplayerowned">
+      <set_value name="$maxrange" exact="[@this.assignedcontrolled.commander.tradenpc.skill.management, @this.assignedcontrolled.pilot.skill.piloting].max / 3"/>
+      <do_if value="$minbuy gt [$maxrange - 1, 0].max">
+        <debug_text text="'PATCH: reducing minbuy from %s to %s'.[$minbuy, $maxrange - 1]" filter="savegame"/>
+        <edit_order_param order="this.assignedcontrolled.order" param="'minbuy'" value="[$maxrange - 1, 0].max"/>
+      </do_if>
+      <do_if value="$maxbuy gt $maxrange">
+        <debug_text text="'PATCH: reducing maxbuy from %s to %s'.[$maxbuy, $maxrange]" filter="savegame"/>
+        <edit_order_param order="this.assignedcontrolled.order" param="'maxbuy'" value="$maxrange"/>
+      </do_if>
+      <do_if value="$minsell gt [$maxrange - 1, 0].max">
+        <debug_text text="'PATCH: reducing minsell from %s to %s'.[$minsell, $maxrange - 1]" filter="savegame"/>
+        <edit_order_param order="this.assignedcontrolled.order" param="'minsell'" value="[$maxrange - 1, 0].max"/>
+      </do_if>
+      <do_if value="$maxsell gt $maxrange">
+        <debug_text text="'PATCH: reducing maxsell from %s to %s'.[$maxsell, $maxrange]" filter="savegame"/>
+        <edit_order_param order="this.assignedcontrolled.order" param="'maxsell'" value="$maxrange"/>
+      </do_if>
+      <remove_value name="$maxrange"/>
+    </do_if>
+  </patch>
   <patch sinceversion="4">
-    <do_if value="this.assignedcontrolled.order.id == 'MiningRoutine'">
+    <do_if value="this.assignedcontrolled.order.id == 'MiningRoutine' or this.assignedcontrolled.order.id == 'MiningRoutine_GT'">
       <edit_order_param order="this.assignedcontrolled.order" param="'effectiveskill'" value="this.assignedcontrolled.combinedskill"/>
     </do_if>
   </patch>
@@ -184,7 +248,7 @@
     <set_value name="$time_start" exact="player.age"/>
     <set_value name="$duration" exact="0s"/>
 
-    <do_if value="(this.assignedcontrolled.order.id == 'MiningRoutine') or (this.assignedcontrolled.order.id == 'MiningRoutine_Basic') or (this.assignedcontrolled.order.id == 'MiningRoutine_Advanced') or (this.assignedcontrolled.order.id == 'MiningRoutine_Expert')">
+    <do_if value="(this.assignedcontrolled.order.id == 'MiningRoutine') or (this.assignedcontrolled.order.id == 'MiningRoutine_Basic') or (this.assignedcontrolled.order.id == 'MiningRoutine_Advanced') or (this.assignedcontrolled.order.id == 'MiningRoutine_Expert') or (this.assignedcontrolled.order.id == 'MiningRoutine_GT')">
       <!-- NB: if this is not the current order, variables will be correctly set when the script starts/restarts. -->
       <set_value name="$thisorder" exact="this.assignedcontrolled.order"/>
     </do_if>
@@ -249,6 +313,22 @@
       <remove_value name="$found"/>
     </do_if>
   </patch>
+  <patch sinceversion="15">
+    <do_if value="$resourcescout and this.assignedcontrolled.isjobship">
+      <set_value name="$maxbuy" exact="5"/>
+      <do_if value="@this.assignedcontrolled.order.id == 'MiningRoutine' or @this.assignedcontrolled.order.id == 'MiningRoutine_GT'">
+        <edit_order_param order="this.assignedcontrolled.order" param="'maxbuy'" value="$maxbuy"/>
+      </do_if>
+    </do_if>
+  </patch>
+  <patch sinceversion="16">
+    <do_if value="@this.assignedcontrolled.commander.jobmainsector and ($range != this.assignedcontrolled.commander.jobmainsector)">
+      <set_value name="$range" exact="this.assignedcontrolled.commander.jobmainsector"/>
+      <do_if value="@$thisorder.exists and $thisorder.$range? and ($thisorder.$range != $range)">
+        <edit_order_param order="$thisorder" param="'range'" value="$range"/>
+      </do_if>
+    </do_if>
+  </patch>
   <patch sinceversion="17">
     <include_interrupt_actions ref="GetBlacklistgroup"/>
   </patch>
@@ -271,7 +351,7 @@
     </do_if>
   </patch>
   <patch sinceversion="23">
-    <do_if value="$ware?">
+    <do_if value="$ware? and $baseminamount?">
       <set_value name="$freecargo" exact="this.assignedcontrolled.cargo.{$ware}.free"/>
     </do_if>
     <do_if value="$spacedistancefactor?">
@@ -285,9 +365,6 @@
     <do_if value="not $secwares?">
       <set_value name="$secwares" exact="[]"/>
     </do_if>
-  </patch>
-  <patch sinceversion="27">
-    <set_value name="$minrating" exact="3"/>
   </patch>
   <attention min="unknown">
     <actions>
@@ -927,8 +1004,9 @@
       <set_value name="$probesectors" exact="[]"/>
       <!-- to do: for now, these are based on maximum logged numbers and will have to be updated when yields are updated.
                     if/when a way to directly get the yield of spaces (preferably clusters, but zones will do. regions would be ok, but only if you could get some sort of position information) is available, do that instead. -->
+      <set_value name="$minamounts" exact="player.galaxy.yieldthresholds.table"/>
       <set_value name="$secwares" exact="[]"/>
-      <!-- NB: miners tend to find the closest sector in their range with resource probes in them that detect yields at or better than what they need, but only drill down to the first probe they find in that sector that has yields at or better than minrating -->
+      <!-- NB: miners tend to find the closest sector in their range with resource probes in them that detect yields at or better than what they need, but only drill down to the first probe they find in that sector that has yields at or better than minamount -->
       <!-- NB: for determining specific location, only evaluate probes for the highest priority ware. evaluate all others in the general logic further down. $probesectors prioritized in the later logic. -->
       <do_if value="this.isplayerowned" comment="NPCs do not necessarily place resource probes smartly so let's not get distracted by them">
         <set_value name="$evalware" exact="$miningbasket.{1}"/>
@@ -965,13 +1043,13 @@
                 <do_if value="not $probesectors.indexof.{$space}">
                   <append_to_list name="$probesectors" exact="$space"/>
                 </do_if>
-                <set_value name="$locyieldrating" exact="$space.yieldrating.{$evalware} / (1.0f + ([$range.gatedistance.{$space}, 0].max)f * 0.2f)"/>
-                <debug_text text="'evaluating sector %s\nyieldrating: %s\nraw yieldrating: %s\nminrating: %s\ngatedistance: %s'.[$space.knownname, $locyieldrating, $space.yieldrating.{$evalware}, $minrating, $range.gatedistance.{$space}]" chance="$debugchance2"/>
-                <do_if value="($locyieldrating ge $minrating) and (not $bestyieldrating? or ($locyieldrating gt $bestyieldrating))">
+                <set_value name="$locaveragemaxyield" exact="$space.averagemaxyield.{$evalware}.count / (1.0f + ([$range.gatedistance.{$space}, 0].max)f * 0.2f)"/>
+                <debug_text text="'evaluating sector %s\naveragemaxyield: %s\nraw averagemaxyield: %s\nyieldthreshold: %s\ngatedistance: %s'.[$space.knownname, $locaveragemaxyield, $space.averagemaxyield.{$evalware}.count, $minamounts.{$evalware}, $range.gatedistance.{$space}]" chance="$debugchance2"/>
+                <do_if value="($locaveragemaxyield ge $minamounts.{$evalware}) and (not $bestaveragemaxyield? or ($locaveragemaxyield gt $bestaveragemaxyield))">
                   <set_value name="$bestsector" exact="$space"/>
-                  <set_value name="$bestyieldrating" exact="$locyieldrating"/>
+                  <set_value name="$bestaveragemaxyield" exact="$locaveragemaxyield"/>
                 </do_if>
-                <remove_value name="$locyieldrating"/>
+                <remove_value name="$locaveragemaxyield"/>
               </do_if>
             </do_if>
             <remove_value name="$iscontested"/>
@@ -985,24 +1063,24 @@
           <shuffle_list list="$resourceprobes"/>
           <do_for_each name="$probe" in="$resourceprobes">
             <do_if value="$probe.isoperational">
-              <set_value name="$locrating" exact="$probe.bestyieldrating.{$evalware}"/>
-              <debug_text text="'locrating: %s, yieldrating: %s'.[$locrating, $bestsector.yieldrating.{$evalware}]" chance="$debugchance2"/>
-              <do_if value="$locrating and ($locrating ge $bestsector.yieldrating.{$evalware})">
-                <do_if value="(not $bestyield? or ($locrating gt $bestyield))">
-                  <set_value name="$bestyield" exact="$locrating"/>
+              <set_value name="$locamount" exact="$probe.currentbestyield.{$evalware}"/>
+              <debug_text text="'locamount: %s, averagemaxyield: %s'.[$locamount, $bestsector.averagemaxyield.{$evalware}.count]" chance="$debugchance2"/>
+              <do_if value="$locamount and ($locamount ge $bestsector.averagemaxyield.{$evalware}.count)">
+                <do_if value="(not $bestyield? or ($locamount gt $bestyield))">
+                  <set_value name="$bestyield" exact="$locamount"/>
                   <set_value name="$bestprobe" exact="$probe"/>
                   <debug_text text="'%s %s found close to %s %s in %s %s.\n%sm away from me.'.[$bestyield, $evalware, $bestprobe.class, $bestprobe, $bestsector.class, $bestsector.knownname, this.assignedcontrolled.distanceto.{$bestprobe}]" chance="$debugchance2"/>
-                  <do_if value="$locrating ge $minrating">
-                    <debug_text text="'going to mine %s in %s.\namount close to probe: %s\namount needed: %s'.[$evalware, $bestsector.knownname, $locrating, this.assignedcontrolled.cargo.{$evalware}.free]" chance="$debugchance"/>
-                    <!-- stop evaluating at resource probes that fulfill minrating to mitigate multiple mining ships converging at the best probe. -->
+                  <do_if value="$locamount ge [$minamounts.{$evalware}, this.assignedcontrolled.cargo.{$evalware}.free].max">
+                    <debug_text text="'going to mine %s in %s.\namount close to probe: %s\namount needed: %s'.[$evalware, $bestsector.knownname, $locamount, this.assignedcontrolled.cargo.{$evalware}.free]" chance="$debugchance"/>
+                    <!-- stop evaluating at resource probes that fulfill minamounts to mitigate multiple mining ships converging at the best probe. -->
                     <break/>
                   </do_if>
                 </do_if>
               </do_if>
               <do_else>
-                <debug_text text="'probe skipped due to having low yield rating.\nprobe yield rating: %s, sector yield rating: %s'.[$locrating, $bestsector.yieldrating.{$evalware}]" chance="$debugchance2"/>
+                <debug_text text="'probe skipped due to having low yield.\nprobe yield: %s, sector average: %s'.[$locamount, $bestsector.averagemaxyield.{$evalware}.count]" chance="$debugchance2"/>
               </do_else>
-              <remove_value name="$locrating"/>
+              <remove_value name="$locamount"/>
             </do_if>
           </do_for_each>
         </do_if>
@@ -1011,7 +1089,7 @@
           <set_value name="$bestyield" min="$bestyield * [$effectiveskill, 1].max / 100.0f" max="$bestyield" profile="decreasing"/>
           <debug_text text="'\npreyield: %s\nbestyield: %s\nworstyield: %s\nskill: %s'.[$rawbestyield, $bestyield, $bestyield * [$effectiveskill, 1].max / 100.0f, $effectiveskill]" chance="$debugchance2"/>
           <do_if value="not $deepspace and this.isplayerowned and this.assignedcontrolled.attention ge attention.visible and this.assignedcontrolled.hascontext.{$bestsector} and $evalware.hastag.mineral">
-            <find_asteroid_with_yield_in_sector name="$closestasteroid" sector="$bestsector" refobject="this.assignedcontrolled" canpickup="false" maxdistance="120km" ware="$evalware"/>
+            <find_asteroid_in_cluster name="$closestasteroid" cluster="$bestsector.cluster" refobject="this.assignedcontrolled" canpickup="false" maxdistance="120km" ware="$evalware"/>
             <do_if value="@$closestasteroid.hascontext.{$bestsector}">
               <set_value name="$sector" exact="$closestasteroid.sector"/>
               <create_position name="$pos_sector" space="$sector" object="$closestasteroid"/>
@@ -1020,7 +1098,7 @@
             <remove_value name="$closestasteroid"/>
           </do_if>
           <do_if value="not @$sector.exists">
-            <find_closest_resource sector="$sector" position="$pos_sector" wares="$secwares" distance="$distance" ware="$evalware" refobject="$bestsector" minrating="$bestyield" useundiscovered="not this.isplayerowned">
+            <find_closest_resource sector="$sector" position="$pos_sector" wares="$secwares" distance="$distance" ware="$evalware" refobject="$bestsector" minamount="$bestyield" useundiscovered="not this.isplayerowned">
               <refposition value="$bestsector.coreposition" object="$bestsector" max="$bestsector.coresize / 4m"/>
             </find_closest_resource>
           </do_if>
@@ -1033,7 +1111,7 @@
           </do_if>
         </do_if>
       </do_if>
-      <remove_value name="$bestyieldrating"/>
+      <remove_value name="$bestaveragemaxyield"/>
       <remove_value name="$bestsector"/>
       <remove_value name="$bestprobe"/>
       <remove_value name="$distance"/>
@@ -1057,23 +1135,18 @@
         <!-- Iterate over the wares in the basket -->
         <do_all exact="$miningbasket.count" counter="$w" >
           <set_value name="$ware" exact="$miningbasket.{$w}" />
-          <!-- Find Resouces: Iterate over the gathering spaces (vanilla: scale required rating by sector yield + skill, not raw yield amount thresholds). -->
+          <set_value name="$freecargo" exact="this.assignedcontrolled.cargo.{$ware}.free"/>
+          <set_value name="$baseminamount" exact="$freecargo"/>
+          <do_if value="$baseminamount lt $minamounts.{$ware}">
+            <set_value name="$baseminamount" min="$baseminamount" max="$minamounts.{$ware}"/>
+          </do_if>
+          <!-- Find Resouces: Iterate over the gathering spaces -->
           <do_all exact="$gatheringspaces.count" counter="$i">
-            <!-- Per-sector $baserating: vanilla keeps one value across all $i, so a high yield in an early sector raises minrating for every later sector and can exceed any single field's rating vs sector yieldrating. -->
-            <set_value name="$baserating" exact="$minrating"/>
-            <do_if value="$gatheringspaces.{$i}.isclass.sector">
-              <set_value name="$locyieldrating" exact="$gatheringspaces.{$i}.yieldrating.{$ware}"/>
-              <set_value name="$baserating" min="$baserating" max="[$baserating, (($locyieldrating)f * (this.assignedcontrolled.combinedskill / 100.0))i].max"/>
-              <do_if value="$probesectors.indexof.{$gatheringspaces.{$i}} and $locyieldrating lt $baserating">
-                <set_value name="$baserating" exact="$baserating / 2"/>
-              </do_if>
-              <remove_value name="$locyieldrating"/>
+            <set_value name="$scaledminamount" exact="[$freecargo, $baseminamount].max"/>
+            <do_if value="$probesectors.indexof.{$gatheringspaces.{$i}}">
+              <set_value name="$scaledminamount" exact="$scaledminamount / 2.0f"/>
             </do_if>
-            <!-- Sector yieldrating can exceed individual field ratings; cap find_closest_resource threshold. -->
-            <do_if value="$baserating gt 6">
-              <set_value name="$baserating" exact="6"/>
-            </do_if>
-            <debug_text text="'now looking for %1 in %2 %3, baserating = %4, minrating = %5'.[$ware, $gatheringspaces.{$i}.class, $gatheringspaces.{$i}.knownname, $baserating, $minrating]" chance="$debugchance" />
+            <debug_text text="'now looking for %1 in %2 %3, scaledminamount = %4, baseminamount = %5, minamount = %6, freecargo = %7'.[$ware, $gatheringspaces.{$i}.class, $gatheringspaces.{$i}.knownname, $scaledminamount, $baseminamount, $minamounts.{$ware}, $freecargo]" chance="$debugchance" />
             <!-- NB: As this was (commented out below), when the ship evaluates this.cluster, it looks in the station's cluster. If it doesn't find anything until the list iterates to the station's cluster, it looks at it again.
                   Changed so that it will look in this.cluster when it is in this.cluster.
 
@@ -1099,7 +1172,7 @@
                   <param name="sector" value="$clustersectors.{$j}"/>
                   <param name="allowyaxis" value="true"/>
                 </run_script>
-                <find_closest_resource ware="$ware" refobject="$clustersectors.{$j}" sector="$sector" position="$pos_sector" wares="$secwares" minrating="$baserating">
+                <find_closest_resource ware="$ware" refobject="$clustersectors.{$j}" sector="$sector" position="$pos_sector" wares="$secwares" minamount="$minamounts.{$ware}">
                   <refposition value="$deepspacepos"/>
                 </find_closest_resource>
                 <do_if value="$sector">
@@ -1110,7 +1183,7 @@
               <remove_value name="$clustersectors"/>
             </do_if>
             <do_elseif value="$gatheringspaces.{$i}.isclass.sector">
-              <do_if value="not $bestsector? or ($gatheringspaces.{$i}.yieldrating.{$ware} gt $bestsector.yieldrating.{$ware})">
+              <do_if value="not $bestsector? or ($gatheringspaces.{$i}.averagemaxyield.{$ware}.count gt $bestsector.averagemaxyield.{$ware}.count)">
                 <do_if value="($gatheringspaces.{$i} == @this.assignedcontrolled.commander.sector) or not $gatheringspaces.{$i}.hashazardousregion or $gatheringspaces.{$i}.containsthewave or not this.assignedcontrolled.takesregiondamage">
                   <do_if value="not $gatheringspaces.{$i}.owner or not this.hasrelation.enemy.{$gatheringspaces.{$i}.owner}">
                     <do_if value="not $gatheringspaces.{$i}.policefaction or (this.owner == $gatheringspaces.{$i}.policefaction) or not $ware.illegalto.{$gatheringspaces.{$i}.policefaction}.{this.owner}">
@@ -1125,7 +1198,7 @@
                         </do_if>
                       </do_if>
                       <do_if value="not $iscontested?">
-                        <!-- failsafe. in case nothing is found that meets yield threshold. -->
+                        <!-- failsafe. in case nothing is found that meets $scaledminamount. -->
                         <set_value name="$bestsector" exact="$gatheringspaces.{$i}"/>
                         <debug_text text="'recording sector %s for fallback in case needed.'.[$bestsector.knownname]" chance="$debugchance2"/>
                       </do_if>
@@ -1138,7 +1211,7 @@
               <do_if value="(not $preferownspace or $gatheringspaces.{$i}.owner == this.trueowner) and $gatheringspaces.{$i}.resources.{$ware}.exists">
                 <do_if value="this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}}">
                   <do_if value="this.isplayerowned and this.assignedcontrolled.attention ge attention.visible and $ware.hastag.mineral">
-                    <find_asteroid_with_yield_in_sector name="$closestasteroid" sector="this.assignedcontrolled.sector" refobject="this.assignedcontrolled" canpickup="false" maxdistance="120km" ware="$ware"/>
+                    <find_asteroid_in_cluster name="$closestasteroid" cluster="this.assignedcontrolled.cluster" refobject="this.assignedcontrolled" canpickup="false" maxdistance="120km" ware="$ware"/>
                     <do_if value="@$closestasteroid.hascontext.{$gatheringspaces.{$i}}">
                       <set_value name="$sector" exact="$closestasteroid.sector"/>
                       <create_position name="$pos_sector" space="$sector" object="$closestasteroid"/>
@@ -1147,12 +1220,12 @@
                     <remove_value name="$closestasteroid"/>
                   </do_if>
                   <do_if value="not @$sector.exists">
-                    <find_closest_resource sector="$sector" position="$pos_sector" wares="$secwares" ware="$ware" refobject="this.assignedcontrolled" minrating="$baserating" useundiscovered="not this.isplayerowned"/>
-                    <!--<find_closest_resource ware="$ware" refobject="if $homebase? then $homebase else this.assignedcontrolled" zone="$zone" wares="$secwares" minrating="$baserating"/>-->
+                    <find_closest_resource sector="$sector" position="$pos_sector" wares="$secwares" ware="$ware" refobject="this.assignedcontrolled" minamount="$scaledminamount" useundiscovered="not this.isplayerowned"/>
+                    <!--<find_closest_resource ware="$ware" refobject="if $homebase? then $homebase else this.assignedcontrolled" zone="$zone" wares="$secwares" minamount="$minamounts.{$ware}"/>-->
                   </do_if>
                 </do_if>
                 <do_else>
-                  <find_closest_resource sector="$sector" position="$pos_sector" wares="$secwares" ware="$ware" refobject="$gatheringspaces.{$i}" minrating="$baserating" useundiscovered="not this.isplayerowned">
+                  <find_closest_resource sector="$sector" position="$pos_sector" wares="$secwares" ware="$ware" refobject="$gatheringspaces.{$i}" minamount="$scaledminamount" useundiscovered="not this.isplayerowned">
                     <refposition value="$gatheringspaces.{$i}.coreposition" object="$gatheringspaces.{$i}" max="$gatheringspaces.{$i}.coresize / 4m"/>
                   </find_closest_resource>
                 </do_else>
@@ -1161,7 +1234,7 @@
             <do_else>
               <do_if value="this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}}">
                 <do_if value="this.isplayerowned and this.assignedcontrolled.attention ge attention.visible and $ware.hastag.mineral">
-                  <find_asteroid_with_yield_in_sector name="$closestasteroid" sector="this.assignedcontrolled.sector" refobject="this.assignedcontrolled" canpickup="false" maxdistance="120km" ware="$ware"/>
+                  <find_asteroid_in_cluster name="$closestasteroid" cluster="this.assignedcontrolled.cluster" refobject="this.assignedcontrolled" canpickup="false" maxdistance="120km" ware="$ware"/>
                   <do_if value="@$closestasteroid.hascontext.{$gatheringspaces.{$i}}">
                     <set_value name="$sector" exact="$closestasteroid.sector"/>
                     <create_position name="$pos_sector" space="$sector" object="$closestasteroid"/>
@@ -1170,21 +1243,21 @@
                   <remove_value name="$closestasteroid"/>
                 </do_if>
                 <do_if value="not @$sector.exists">
-                  <find_closest_resource sector="$sector" position="$pos_sector" wares="$secwares" ware="$ware" refobject="this.assignedcontrolled" minrating="$baserating" useundiscovered="not this.isplayerowned"/>
+                  <find_closest_resource sector="$sector" position="$pos_sector" wares="$secwares" ware="$ware" refobject="this.assignedcontrolled" minamount="$scaledminamount" useundiscovered="not this.isplayerowned"/>
                 </do_if>
               </do_if>
               <do_else>
-                <find_resource sector="$sector" position="$pos_sector" wares="$secwares" ware="$ware" refobject="$gatheringspaces.{$i}" minrating="$baserating" useundiscovered="not this.isplayerowned"/>
+                <find_resource sector="$sector" position="$pos_sector" wares="$secwares" ware="$ware" refobject="$gatheringspaces.{$i}" minamount="$scaledminamount" useundiscovered="not this.isplayerowned"/>
               </do_else>
             </do_else>
 
             <do_if value="not @$sector.exists and $debugchance">
-              <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] FIND_FAIL method=primary ware=' + (if $ware? then $ware.name else 'null') + ' gather#' + $i + ' space=' + $gatheringspaces.{$i}.knownname + ' class=' + $gatheringspaces.{$i}.class + ' baserating=' + $baserating + ' minrating=' + $minrating + ' hasContext=' + this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}} + ' resExists=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then $gatheringspaces.{$i}.resources.{$ware}.exists else 'n/a') + ' yieldR=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then @$gatheringspaces.{$i}.yieldrating.{$ware} else 'n/a')" chance="$debugchance"/>
+              <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] FIND_FAIL method=primary ware=' + (if $ware? then $ware.name else 'null') + ' gather#' + $i + ' space=' + $gatheringspaces.{$i}.knownname + ' class=' + $gatheringspaces.{$i}.class + ' scaledMin=' + $scaledminamount + ' hasContext=' + this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}} + ' resExists=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then $gatheringspaces.{$i}.resources.{$ware}.exists else 'n/a') + ' avgMaxY=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then @$gatheringspaces.{$i}.averagemaxyield.{$ware}.count else 'n/a')" chance="$debugchance"/>
             </do_if>
 
             <!-- Zone found -->
             <do_if value="@$sector.exists">
-              <debug_text text="'Resource %1 found in %2, %3. baserating: %4'.[$ware, $sector.knownname, $sector.cluster.knownname, $baserating]" chance="$debugchance"/>
+              <debug_text text="'Resource %1 found in %2, %3. minamount: %4'.[$ware, $sector.knownname, $sector.cluster.knownname, $scaledminamount]" chance="$debugchance"/>
               <do_if value="$gatheringspaces.indexof.{$sector}">
                 <do_if value="this.isplayerowned and $gatheringspaces.count == 1">
                   <break/>
@@ -1218,6 +1291,7 @@
             </do_if>
             <wait min="1ms" max="100ms" comment="Avoid performance peaks with find functions" />
           </do_all>
+          <remove_value name="$scaledminamount"/>
 
           <do_if value="not @$sector.exists and @$hostilesector.exists">
             <debug_text text="'%s %s %s found no safe sector but hostile sector %s owned by %s found. has hazardous region? %s. mining in hostile sector.'.[this.assignedcontrolled.idcode, this.assignedcontrolled.knownname, this.assignedcontrolled, $hostilesector.knownname, $hostilesector.owner, $hostilesector.hashazardousregion]" chance="$debugchance"/>
@@ -1232,7 +1306,7 @@
               <remove_from_list name="$gatheringspaces" exact="$bestsector" multiple="true"/>
               <set_value name="$gatheringspaces.{1}" exact="$bestsector" operation="insert"/>
             </do_if>
-            <debug_text text="'Cannot find resource %1 Trying old method. minrating: %2'.[$ware, $minrating]" chance="$debugchance"/>
+            <debug_text text="'Cannot find resource %1 Trying old method. minamount: %2'.[$ware, $minamounts.{$ware}]" chance="$debugchance"/>
             <!-- Find Resouces: Iterate over the gathering spaces -->
             <do_all exact="$gatheringspaces.count" counter="$i">
               <set_value name="$ware" exact="$miningbasket.{$w}" />
@@ -1268,7 +1342,7 @@
               </do_if>
               <do_elseif value="this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}}">
                 <do_if value="this.isplayerowned and this.assignedcontrolled.attention ge attention.visible and $ware.hastag.mineral">
-                  <find_asteroid_with_yield_in_sector name="$closestasteroid" sector="this.assignedcontrolled.sector" refobject="this.assignedcontrolled" canpickup="false" maxdistance="120km" ware="$ware"/>
+                  <find_asteroid_in_cluster name="$closestasteroid" cluster="this.assignedcontrolled.cluster" refobject="this.assignedcontrolled" canpickup="false" maxdistance="120km" ware="$ware"/>
                   <do_if value="@$closestasteroid.hascontext.{$gatheringspaces.{$i}}">
                     <set_value name="$sector" exact="$closestasteroid.sector"/>
                     <create_position name="$pos_sector" space="$sector" object="$closestasteroid"/>
@@ -1287,7 +1361,7 @@
                 </find_closest_resource>
               </do_else>
               <do_if value="not @$sector.exists and $debugchance">
-                <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] FIND_FAIL method=old ware=' + (if $ware? then $ware.name else 'null') + ' gather#' + $i + ' space=' + $gatheringspaces.{$i}.knownname + ' class=' + $gatheringspaces.{$i}.class + ' minrating=' + $minrating + ' hasContext=' + this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}} + ' resExists=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then $gatheringspaces.{$i}.resources.{$ware}.exists else 'n/a') + ' yieldR=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then @$gatheringspaces.{$i}.yieldrating.{$ware} else 'n/a')" chance="$debugchance"/>
+                <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] FIND_FAIL method=old ware=' + (if $ware? then $ware.name else 'null') + ' gather#' + $i + ' space=' + $gatheringspaces.{$i}.knownname + ' class=' + $gatheringspaces.{$i}.class + ' minamountThresh=' + (if $ware? then $minamounts.{$ware} else 'n/a') + ' hasContext=' + this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}} + ' resExists=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then $gatheringspaces.{$i}.resources.{$ware}.exists else 'n/a') + ' avgMaxY=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then @$gatheringspaces.{$i}.averagemaxyield.{$ware}.count else 'n/a')" chance="$debugchance"/>
               </do_if>
               <!-- Zone found -->
               <do_if value="$sector.exists">
@@ -1336,6 +1410,8 @@
             <break />
           </do_if>
         </do_all>
+        <remove_value name="$baseminamount"/>
+        <remove_value name="$freecargo"/>
       </do_if>
       <remove_value name="$bestsector"/>
 
@@ -1383,13 +1459,13 @@
           <set_value name="$gt_bl_seca" exact="this.assignedcontrolled.hasblacklist.{blacklisttype.sectoractivity}.{$blacklistgroup}"/>
           <set_value name="$gt_bl_trv" exact="this.assignedcontrolled.hasblacklist.{blacklisttype.sectortravel}.{$blacklistgroup}"/>
           <set_value name="$gt_bl_obj" exact="this.assignedcontrolled.hasblacklist.{blacklisttype.objectactivity}.{$blacklistgroup}"/>
-          <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] NO_SECTOR_FOR_WARE lastWare=' + (if $ware? then $ware.name else 'null') + ' miningbasket=' + $miningbasket + ' minrating=' + $minrating + ' gatherN=' + $gatheringspaces.count + ' sellN=' + $sellspaces.count + ' probesectorsN=' + $probesectors.count + ' minbuy=' + $minbuy + ' maxbuy=' + $maxbuy + ' minsell=' + $minsell + ' maxsell=' + $maxsell + ' deepspace=' + $deepspace + ' BLsectorActivity=' + $gt_bl_seca + ' BLsectorTravel=' + $gt_bl_trv + ' BLobjectActivity=' + $gt_bl_obj" chance="$debugchance"/>
+          <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] NO_SECTOR_FOR_WARE lastWare=' + (if $ware? then $ware.name else 'null') + ' miningbasket=' + $miningbasket + ' gatherN=' + $gatheringspaces.count + ' sellN=' + $sellspaces.count + ' probesectorsN=' + $probesectors.count + ' minbuy=' + $minbuy + ' maxbuy=' + $maxbuy + ' minsell=' + $minsell + ' maxsell=' + $maxsell + ' deepspace=' + $deepspace + ' BLsectorActivity=' + $gt_bl_seca + ' BLsectorTravel=' + $gt_bl_trv + ' BLobjectActivity=' + $gt_bl_obj" chance="$debugchance"/>
           <remove_value name="$gt_bl_seca"/>
           <remove_value name="$gt_bl_trv"/>
           <remove_value name="$gt_bl_obj"/>
           <do_all exact="$gatheringspaces.count" counter="$i">
             <do_if value="$ware? and $gatheringspaces.{$i}.isclass.sector">
-              <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] gather#' + $i + ' ' + $gatheringspaces.{$i}.knownname + ' resExists=' + $gatheringspaces.{$i}.resources.{$ware}.exists + ' yieldR=' + @$gatheringspaces.{$i}.yieldrating.{$ware} + ' minrating=' + $minrating" chance="$debugchance"/>
+              <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] gather#' + $i + ' ' + $gatheringspaces.{$i}.knownname + ' resExists=' + $gatheringspaces.{$i}.resources.{$ware}.exists + ' avgMaxY=' + (if $ware? then @$gatheringspaces.{$i}.averagemaxyield.{$ware}.count else 'n/a') + ' yieldThresh=' + (if $ware? and $minamounts? then $minamounts.{$ware} else 'n/a')" chance="$debugchance"/>
             </do_if>
             <do_else>
               <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] gather#' + $i + ' ' + $gatheringspaces.{$i}.class + ' ' + $gatheringspaces.{$i}.knownname + ' (non-sector)'" chance="$debugchance"/>
@@ -1453,19 +1529,6 @@
         </run_script>
         <resume label="loop"/>
       </do_if>
-      <do_else>
-        <!-- we already know where we want to mine, just need the resource area at that location. -->
-        <find_closest_resource resourcearea="$resourcearea" ware="$ware" sector="$locsector" position="$locpos" refobject="$sector">
-          <refposition value="$pos_sector" object="$sector"/>
-        </find_closest_resource>
-        <remove_value name="$locsector"/>
-        <remove_value name="$locpos"/>
-        <do_if value="not @$resourcearea">
-          <debug_text text="'resource area no longer valid. looping back to search again.'" chance="$debugchance"/>
-          <resume label="loop"/>
-        </do_if>
-        <add_yield_reservation reserver="this.assignedcontrolled" resourcearea="$resourcearea"/>
-      </do_else>
 
       <do_if value="@this.assignedcontrolled.order.isrunning">
         <clear_order_failure order="this.assignedcontrolled.order"/>
@@ -1477,7 +1540,6 @@
         <param name="destination" value="[$sector, $pos_sector]"/>
         <param name="ware" value="$ware"/>
         <param name="secwares" value="if $effectiveskill then $secwares else []"/>
-        <param name="resourcearea" value="@$resourcearea"/>
         <param name="internalorder" value="not $blacklist_overridebuy?"/>
         <param name="debugchance" value="$debugchance"/>
 
@@ -1669,7 +1731,7 @@
         </do_if>
       </do_if>
 
-      <do_if value="(this.assignedcontrolled.order.id == 'MiningRoutine') or (this.assignedcontrolled.order.id == 'MiningRoutine_Basic') or (this.assignedcontrolled.order.id == 'MiningRoutine_Advanced') or (this.assignedcontrolled.order.id == 'MiningRoutine_Expert')">
+      <do_if value="(this.assignedcontrolled.order.id == 'MiningRoutine') or (this.assignedcontrolled.order.id == 'MiningRoutine_Basic') or (this.assignedcontrolled.order.id == 'MiningRoutine_Advanced') or (this.assignedcontrolled.order.id == 'MiningRoutine_Expert') or (this.assignedcontrolled.order.id == 'MiningRoutine_GT')">
         <!-- NB: order will not be interrupted until after a blocking action is hit so, if a trade order is to be added and this order is to be interrupted, the trade order will be added first. -->
         <set_order_syncpoint_reached order="this.assignedcontrolled.order"/>
       </do_if>
