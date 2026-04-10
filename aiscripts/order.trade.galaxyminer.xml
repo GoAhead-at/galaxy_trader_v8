@@ -5,7 +5,10 @@
       <param name="homeStation" type="object" default="null" text="{77000, 31010}" comment="{77000, 31110}">
         <input_param name="class" value="[class.station]"/>
       </param>
-      <param name="homeSector" type="object" default="null" text="{77000, 31011}" comment="{77000, 31111}">
+      <param name="homePosition" type="position" default="null" text="{77000, 31011}" comment="{77000, 31111}">
+        <input_param name="class" value="class.sector"/>
+      </param>
+      <param name="homeSector" type="internal" default="null" comment="Legacy compatibility fallback for pre-homePosition orders.">
         <input_param name="class" value="[class.sector]"/>
       </param>
       <param name="resourceBasket" default="this.ship.warebasket.list" type="list" text="{77000, 31012}" comment="{77000, 31112}">
@@ -106,9 +109,27 @@
     <set_value name="this.$homeConfigValid" exact="true"/>
 
     <!-- Canonicalize home anchor:
-         if both are provided, keep both and resolve usage per mode (stayAtHome prefers homeSector). -->
+         resolve homeSector from homePosition first; keep legacy homeSector as fallback for existing saves/orders. -->
+    <do_if value="$homePosition? and $homePosition.{1}? and $homePosition.{1}.exists">
+      <do_if value="$homePosition.{1}.isclass.sector">
+        <set_value name="$homeSector" exact="$homePosition.{1}"/>
+      </do_if>
+      <do_elseif value="$homePosition.{1}.sector? and $homePosition.{1}.sector.exists">
+        <set_value name="$homeSector" exact="$homePosition.{1}.sector"/>
+      </do_elseif>
+    </do_if>
+    <do_elseif value="$homeSector? and $homeSector.exists">
+      <set_value name="$homePosition" exact="[$homeSector, $homeSector.coreposition]"/>
+      <do_if value="this.ship.order? and this.ship.order.exists">
+        <edit_order_param order="this.ship.order" param="'homePosition'" value="$homePosition"/>
+      </do_if>
+      <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
+        <edit_order_param order="this.ship.defaultorder" param="'homePosition'" value="$homePosition"/>
+      </do_if>
+      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Migrated legacy homeSector to homePosition (sector=' + $homeSector.knownname + ')'" chance="$debugchance"/>
+    </do_elseif>
     <do_if value="($homeStation? and $homeStation.exists) and ($homeSector? and $homeSector.exists)">
-      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Home config has station+sector; preserving both (station=' + $homeStation.idcode + ', sector=' + $homeSector.knownname + ')'" chance="$debugchance"/>
+      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Home config has station+position-derived sector; preserving both (station=' + $homeStation.idcode + ', sector=' + $homeSector.knownname + ')'" chance="$debugchance"/>
     </do_if>
     <do_if value="not $assignToStation and $homeStation? and $homeStation.exists">
       <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': assignToStation disabled -> clearing homeStation ' + $homeStation.idcode" chance="$debugchance"/>
@@ -126,16 +147,23 @@
     </do_if>
     <do_if value="(not $homeStation? or not $homeStation.exists) and (not $homeSector? or not $homeSector.exists) and this.sector? and this.sector.exists">
       <set_value name="$homeSector" exact="this.sector"/>
+      <set_value name="$homePosition" exact="[$homeSector, $homeSector.coreposition]"/>
+      <do_if value="this.ship.order? and this.ship.order.exists">
+        <edit_order_param order="this.ship.order" param="'homePosition'" value="$homePosition"/>
+      </do_if>
+      <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
+        <edit_order_param order="this.ship.defaultorder" param="'homePosition'" value="$homePosition"/>
+      </do_if>
       <do_if value="this.ship.order? and this.ship.order.exists">
         <edit_order_param order="this.ship.order" param="'homeSector'" value="$homeSector"/>
       </do_if>
       <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
         <edit_order_param order="this.ship.defaultorder" param="'homeSector'" value="$homeSector"/>
       </do_if>
-      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': No home configured -> auto-set homeSector to current sector ' + $homeSector.knownname" chance="$debugchance"/>
+      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': No home configured -> auto-set homePosition/homeSector to current sector ' + $homeSector.knownname" chance="$debugchance"/>
     </do_if>
     <do_if value="(not $homeStation? or not $homeStation.exists) and (not $homeSector? or not $homeSector.exists)">
-      <show_notification text="'Galaxy-Miner: set Home Station or Home Sector.'" timeout="10s"/>
+      <show_notification text="'Galaxy-Miner: set Home Station or Home Position.'" timeout="10s"/>
       <set_command_action commandaction="commandaction.standingby"/>
       <set_value name="this.$homeConfigValid" exact="false"/>
     </do_if>
@@ -151,6 +179,7 @@
 
     <!-- Persist resolved config -->
     <set_value name="this.$homeStation" exact="$homeStation"/>
+    <set_value name="this.$homePosition" exact="$homePosition"/>
     <set_value name="this.$homeSector" exact="$homeSector"/>
     <set_value name="this.$resourceBasket" exact="$resourceBasket"/>
     <set_value name="this.$stationList" exact="$stationList"/>
