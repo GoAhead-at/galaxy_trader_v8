@@ -907,6 +907,37 @@
       <set_value name="$minsell" exact="0"/>
       <set_value name="$maxsell" exact="$effectiveMaxSellDistanceHomeSafe"/>
       <set_value name="$resourcescout" exact="this.$autoDeployResourceProbes"/>
+      <!-- Preflight guard: only issue mining slice when selected ware has an actual reachable resource node now. -->
+      <set_value name="$preflightFoundSector" exact="null"/>
+      <set_value name="$preflightFoundPos" exact="null"/>
+      <set_value name="$preflightGatherSpaces" exact="[]"/>
+      <run_script name="'lib.find.sectors.inrange'" result="$preflightGatherSpaces">
+        <param name="refobject" value="$range"/>
+        <param name="mingatedistance" value="$minbuy"/>
+        <param name="maxgatedistance" value="$maxbuy"/>
+        <param name="debugchance" value="this.$debugchance"/>
+      </run_script>
+      <do_if value="$strictGatherSector? and $strictGatherSector.exists">
+        <set_value name="$preflightGatherSpaces" exact="[$strictGatherSector]"/>
+      </do_if>
+      <do_if value="$preflightGatherSpaces.count == 0 and $range? and $range.exists">
+        <set_value name="$preflightGatherSpaces" exact="[$range]"/>
+      </do_if>
+      <do_all exact="$preflightGatherSpaces.count" counter="$pfsi">
+        <set_value name="$preflightSpace" exact="$preflightGatherSpaces.{$pfsi}"/>
+        <do_if value="$preflightSpace? and $preflightSpace.exists and (($preflightSpace.isclass.sector and $preflightSpace.resources.{$selectedWare}.exists) or ($preflightSpace.sector? and $preflightSpace.sector.exists and $preflightSpace.sector.resources.{$selectedWare}.exists))">
+          <set_value name="$preflightRefObject" exact="if $preflightSpace.isclass.sector then $preflightSpace else (if $preflightSpace.sector? and $preflightSpace.sector.exists then $preflightSpace.sector else $preflightSpace)"/>
+          <find_closest_resource sector="$preflightFoundSector" position="$preflightFoundPos" ware="$selectedWare" refobject="$preflightRefObject" useundiscovered="not this.ship.isplayerowned"/>
+          <do_if value="$preflightFoundSector? and $preflightFoundSector.exists">
+            <break/>
+          </do_if>
+        </do_if>
+      </do_all>
+      <do_if value="not ($preflightFoundSector? and $preflightFoundSector.exists)">
+        <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Preflight reject for ware=' + $selectedWare.name + ' (no reachable resource node this cycle). Waiting.'" chance="this.$debugchance"/>
+        <wait exact="this.$demandRecheckInterval"/>
+        <resume label="main_loop"/>
+      </do_if>
       <set_value name="this.$miner_prevCargoTotal" exact="0"/>
       <set_value name="this.$miner_prevCargoByWare" exact="table[]"/>
       <set_value name="this.$miner_prevStationCargoByStation" exact="table[]"/>

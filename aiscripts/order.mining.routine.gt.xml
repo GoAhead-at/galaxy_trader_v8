@@ -1450,7 +1450,12 @@
           <do_if value="this.assignedcontrolled.hasblacklist.{blacklisttype.sectoractivity}.{$blacklistgroup} or this.assignedcontrolled.hasblacklist.{blacklisttype.sectortravel}.{$blacklistgroup} or this.assignedcontrolled.hasblacklist.{blacklisttype.objectactivity}.{$blacklistgroup}">
             <set_value name="$failurereason" exact="{1045, 106}" comment="No resources found in allowed sectors."/>
           </do_if>
-          <set_order_failed order="this.assignedcontrolled.order" text="$failurereason"/>
+          <do_if value="@this.assignedcontrolled.order.id != 'GalaxyMiner'">
+            <set_order_failed order="this.assignedcontrolled.order" text="$failurereason"/>
+          </do_if>
+          <do_else>
+            <debug_text text="'[GT-MiningRoutine] ' + this.assignedcontrolled.idcode + ': No resources for selected ware this cycle; skipping hard order failure for GalaxyMiner.'" chance="$debugchance"/>
+          </do_else>
           <remove_value name="$failurereason"/>
         </do_if>
         <!-- Debug info: Enable to see the mining ships unable to gather resources on the defined spaces -->
