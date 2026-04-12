@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<aiscript name="order.gt.returnhome" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../stock_game/X4 Foundations/libraries/aiscripts.xsd" version="1">
+  <order id="DockAndReturnHome" name="{77000, 10006}" description="{77000, 10106}" category="navigation" infinite="false">
+    <params>
+      <param name="destination" type="object" text="{1041, 10141}" comment="Home station to dock at">
+        <input_param name="class" value="[class.station]"/>
+      </param>
+      <param name="debugchance" default="0" type="number" text="{1001, 9074}" comment="{1001, 9075}">
+        <input_param name="min" value="0"/>
+        <input_param name="max" value="100"/>
+      </param>
+    </params>
+    <requires>
+      <match shiptype="shiptype.lasertower" negate="true"/>
+    </requires>
+    <location object="$destination" condition="@$destination.exists"/>
+  </order>
+
+  <interrupts>
+    <handler ref="TargetInvalidHandler"/>
+    <handler ref="AttackHandler"/>
+  </interrupts>
+
+  <init>
+    <set_order_syncpoint_reached order="this.ship.order"/>
+    <set_command command="command.dockat" param="$destination"/>
+    <set_command_action commandaction="commandaction.flyingto" param="$destination"/>
+    <set_value name="$holdTimeout" exact="6h"/>
+    <do_if value="not global.$GT_ReturnHomeHold?">
+      <set_value name="global.$GT_ReturnHomeHold" exact="table[]"/>
+    </do_if>
+    <do_if value="not global.$GT_ReturnHomeHoldUntil?">
+      <set_value name="global.$GT_ReturnHomeHoldUntil" exact="table[]"/>
+    </do_if>
+    <do_if value="not global.$GT_MK1DockedSince?">
+      <set_value name="global.$GT_MK1DockedSince" exact="table[]"/>
+    </do_if>
+    <!-- Keep ship docked after return-home until MK1 explicitly queues new trade orders. -->
+    <set_value name="global.$GT_ReturnHomeHold.{this.ship}" exact="true"/>
+    <!-- Keep hold active across potentially long return flights; MK1 handles timed undock retries while docked. -->
+    <set_value name="global.$GT_ReturnHomeHoldUntil.{this.ship}" exact="player.age + $holdTimeout"/>
+  </init>
+
+  <attention min="unknown">
+    <actions>
+      <do_if value="not $destination? or not $destination.exists">
+        <set_command_action commandaction="commandaction.orderfailed"/>
+        <return/>
+      </do_if>
+
+      <set_value name="$alreadyDocked" exact="(this.ship.dock and this.ship.dock.container == $destination) or (this.ship.parkedat and ((this.ship.parkedat == $destination) or this.ship.parkedat.hascontext.{$destination}))"/>
+      <do_if value="not $alreadyDocked">
+        <create_order name="$dockOrder" id="'DockAndWait'" object="this.ship" immediate="true">
+          <param name="destination" value="$destination"/>
+          <param name="building" value="false"/>
+          <param name="trading" value="true"/>
+          <param name="dockfollowers" value="false"/>
+          <param name="allowplayeronly" value="true"/>
+          <param name="callerid" value="this.ship.order"/>
+          <param name="debugchance" value="$debugchance"/>
+        </create_order>
+
+        <wait>
+          <interrupt>
+            <conditions>
+              <event_object_order_ready object="this.ship" order="$dockOrder"/>
+            </conditions>
+          </interrupt>
+        </wait>
+      </do_if>
+
+      <set_value name="$isDockedAtDestination" exact="(this.ship.dock and this.ship.dock.container == $destination) or (this.ship.parkedat and ((this.ship.parkedat == $destination) or this.ship.parkedat.hascontext.{$destination}))"/>
+      <do_if value="$isDockedAtDestination">
+        <!-- Anchor timeout to real dock completion time (not return-flight start). -->
+        <set_value name="global.$GT_MK1DockedSince.{this.ship}" exact="player.age"/>
+      </do_if>
+
+      <set_command_action commandaction="commandaction.standingby"/>
+    </actions>
+  </attention>
+</aiscript>

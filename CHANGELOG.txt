@@ -1,6 +1,16 @@
 GalaxyTrader - Changelog
 ========================================
 
+Version 0.12.8 (2026-04-11)
+CHANGE: MK1 return-home behavior now uses a persistent per-ship undocked state between trade cycles.
+FIX: With "Return Home Between Cycles" enabled, ships dock at home, undock after 60s without valid trades, and remain undocked until trades are found.
+FIX: Return-home/no-trade retry flow is now consistent across Assist/MK1 handoffs and restarts, preventing unwanted immediate re-docking loops.
+IMPROVEMENT: Hard selltarget fallback now follows the same return-home state flow as other no-trade outcomes.
+FIX: MK1 queued trade amount is now hard-clamped by real cargo-volume capacity at final queue build, preventing queue/log amounts from exceeding ship capacity.
+CHANGE: MK1 queue logbook output now uses single-entry mode per cycle: single-trade cycles keep the existing per-trade queue message, while multi-trade cycles write one dedicated multitrade queue summary with aggregated expected profit and transaction footer.
+CHANGE: Trade completed logbook entries are disabled; queued trade entries remain active.
+
+
 Version 0.12.7 (2026-04-11)
 FIX: MK3 detached/orphaned subordinate cleanup now always cancels active/default orders for `DETACHED_CLEANUP_REQUIRED`, preventing stale native order state from surviving cleanup.
 FIX: MK3 trade-search scheduler now self-heals stale per-ship live-active state (`LiveActiveShips` / `PhaseStateByShip`) before dedup checks, preventing ships from getting stuck as permanently active/not-queued.
