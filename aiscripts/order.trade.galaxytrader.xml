@@ -1082,6 +1082,38 @@
       <!-- CRITICAL: Check if pilot is missing (pilot was transferred away) -->
       <!-- If GT order is running but ship has no pilot, cleanup and self-cancel -->
       <do_if value="not $currentPilot">
+        <!-- Vanilla transfer pods can take minutes; if a paused GT pilot is already linked to this
+             ship id, keep the GT order alive briefly until the pilot physically arrives. -->
+        <set_value name="$pendingTransferredPilot" exact="false"/>
+        <set_value name="$pendingPilotName" exact="'NONE'"/>
+        <do_if value="global.$GT_Pilots? and global.$GT_Pilots.keys.count gt 0">
+          <set_value name="$pilotKeys" exact="global.$GT_Pilots.keys.list"/>
+          <do_all exact="$pilotKeys.count" counter="$pk">
+            <set_value name="$candidatePilot" exact="$pilotKeys.{$pk}"/>
+            <do_if value="$candidatePilot and global.$GT_Pilots.{$candidatePilot}? and global.$GT_Pilots.{$candidatePilot}.$ShipID? and global.$GT_Pilots.{$candidatePilot}.$ShipID == this.ship.idcode and global.$GT_Pilots.{$candidatePilot}.$Status? and global.$GT_Pilots.{$candidatePilot}.$Status == 'paused'">
+              <set_value name="$pendingTransferredPilot" exact="true"/>
+              <set_value name="$pendingPilotName" exact="if $candidatePilot.name? then $candidatePilot.name else 'UNKNOWN'"/>
+              <break/>
+            </do_if>
+          </do_all>
+        </do_if>
+        
+        <do_if value="$pendingTransferredPilot">
+          <do_if value="not this.$pendingPilotTransferSince?">
+            <set_value name="this.$pendingPilotTransferSince" exact="player.age"/>
+          </do_if>
+          <set_value name="$pendingTransferElapsed" exact="player.age - this.$pendingPilotTransferSince"/>
+          
+          <do_if value="$pendingTransferElapsed lt 15min">
+            <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+              <debug_text text="'[GT-AI] ' + this.ship.idcode + ': Missing pilot but transfer is in progress for ' + $pendingPilotName + ' (elapsed=' + ($pendingTransferElapsed / 1s) + 's) - waiting before cancellation'" chance="100"/>
+            </do_if>
+            <wait exact="5s"/>
+            <return/>
+          </do_if>
+        </do_if>
+        
+        <remove_value name="this.$pendingPilotTransferSince"/>
         <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
           <debug_text text="'[GT-AI] ' + this.ship.idcode + ': MISSING PILOT DETECTED - pilot was transferred away, cleaning up and self-canceling GT order'" chance="100"/>
         </do_if>
@@ -2827,7 +2859,7 @@
           </do_if>
 
           <!-- Clear cargo disposal flag (cargo is now empty) -->
-          <do_if value="global.$GT_Ships? and global.$GT_Ships.{this.ship}? and global.$GT_Ships.{this.ship}.$CargoDisposal?">
+          <do_if value="global.$GT_Ships? and global.$GT_Ships.{this.ship}? and global.$GT_Ships.{this.ship}.$CargoDisposal? and this.ship.cargo.count == 0">
             <remove_value name="global.$GT_Ships.{this.ship}.$CargoDisposal"/>
             
             <!-- CARGO DISPOSAL: Reset cargo disposal failure counter when cargo is cleared -->
@@ -6527,6 +6559,36 @@
       <!-- CRITICAL: Check if pilot is missing (pilot was transferred away) -->
       <!-- If GT order is running but ship has no pilot, cleanup and self-cancel -->
       <do_if value="not $currentPilot">
+        <set_value name="$pendingTransferredPilot" exact="false"/>
+        <set_value name="$pendingPilotName" exact="'NONE'"/>
+        <do_if value="global.$GT_Pilots? and global.$GT_Pilots.keys.count gt 0">
+          <set_value name="$pilotKeys" exact="global.$GT_Pilots.keys.list"/>
+          <do_all exact="$pilotKeys.count" counter="$pk">
+            <set_value name="$candidatePilot" exact="$pilotKeys.{$pk}"/>
+            <do_if value="$candidatePilot and global.$GT_Pilots.{$candidatePilot}? and global.$GT_Pilots.{$candidatePilot}.$ShipID? and global.$GT_Pilots.{$candidatePilot}.$ShipID == this.ship.idcode and global.$GT_Pilots.{$candidatePilot}.$Status? and global.$GT_Pilots.{$candidatePilot}.$Status == 'paused'">
+              <set_value name="$pendingTransferredPilot" exact="true"/>
+              <set_value name="$pendingPilotName" exact="if $candidatePilot.name? then $candidatePilot.name else 'UNKNOWN'"/>
+              <break/>
+            </do_if>
+          </do_all>
+        </do_if>
+        
+        <do_if value="$pendingTransferredPilot">
+          <do_if value="not this.$pendingPilotTransferSince?">
+            <set_value name="this.$pendingPilotTransferSince" exact="player.age"/>
+          </do_if>
+          <set_value name="$pendingTransferElapsed" exact="player.age - this.$pendingPilotTransferSince"/>
+          
+          <do_if value="$pendingTransferElapsed lt 15min">
+            <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+              <debug_text text="'[GT-AI] ' + this.ship.idcode + ': Missing pilot after trade completion but transfer is in progress for ' + $pendingPilotName + ' (elapsed=' + ($pendingTransferElapsed / 1s) + 's) - waiting before cancellation'" chance="100"/>
+            </do_if>
+            <wait exact="5s"/>
+            <return/>
+          </do_if>
+        </do_if>
+        
+        <remove_value name="this.$pendingPilotTransferSince"/>
         <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
           <debug_text text="'[GT-AI] ' + this.ship.idcode + ': MISSING PILOT DETECTED after trade completion - pilot was transferred away, cleaning up and self-canceling GT order'" chance="100"/>
         </do_if>
@@ -8752,6 +8814,22 @@
       </do_if>
     </do_if>
 
+    <!-- Clear stale clearance naming flag on order abort only when cargo is actually empty.
+         Keep [CLEARANCE]/CL during active disposal with remaining cargo. -->
+    <do_if value="this.ship.cargo.count == 0 and global.$GT_Ships? and global.$GT_Ships.{this.ship}? and global.$GT_Ships.{this.ship}.$CargoDisposal?">
+      <remove_value name="global.$GT_Ships.{this.ship}.$CargoDisposal"/>
+      <do_if value="@this.ship.pilot and global.$GT_Pilots? and global.$GT_Pilots.{this.ship.pilot}?">
+        <signal_objects object="player.galaxy" param="'GT_Update_Ship_Name'" param2="table[
+          $Ship = this.ship,
+          $pilot = this.ship.pilot,
+          $xp = global.$GT_Pilots.{this.ship.pilot}.$XP,
+          $level = global.$GT_Pilots.{this.ship.pilot}.$Level,
+          $rank = @global.$GT_Pilots.{this.ship.pilot}.$CurrentRank,
+          $nameType = 'trader'
+        ]"/>
+      </do_if>
+    </do_if>
+
     <!-- Enhanced cleanup when order is aborted/replaced -->
     <!-- Preserve pilot XP data when order is manually replaced by player -->
     <!-- Only completely wipe data in genuine cleanup scenarios (ship destroyed, pilot changed, etc.) -->
@@ -8866,7 +8944,7 @@
     
     <!-- If GT order is gone, process cleanup REGARDLESS of training/maintenance transitions -->
     <!-- Only skip Phase 7 if GT order is STILL ACTIVE AND there's a training/maintenance transition -->
-    <do_if value="not $isGTControlled">
+    <do_if value="not $isGTControlled and $currentDefaultOrder != 'Assist'">
       <!-- GT order is gone - process cleanup even if training/maintenance/disposal orders exist -->
       <!-- Check if GT default order is still active -->
       <!-- If defaultorder.id is null, different, or not GalaxyTraderMK3, GT order was cancelled -->
@@ -8967,7 +9045,7 @@
         <!-- For subordinates, Assist order termination is handled by Assist order's on_abort -->
         <!-- Trade order termination is NORMAL and should NOT trigger cleanup -->
         <set_value name="$shouldEmitCleanup" exact="false"/>
-        <do_if value="not $hasDirectGTOrder and not $hasGTCommander">
+        <do_if value="not $hasDirectGTOrder and not $hasGTCommander and $currentDefaultOrder != 'Assist'">
           <!-- No direct GT order and no GT commander = GT order truly gone -->
           <set_value name="$shouldEmitCleanup" exact="true"/>
         </do_if>
@@ -9250,7 +9328,7 @@
       <!-- When player stops order, we MUST restore name even if TradePerform orders are still active -->
       <!-- Unified GT order status check (inline for AI scripts) -->
       <!-- If GT order is gone (no direct, no commander), it's permanent removal REGARDLESS of trading state -->
-      <set_value name="$isPermanentRemoval" exact="not $hasDirectGTOrder and not $hasGTCommander"/>
+      <set_value name="$isPermanentRemoval" exact="not $hasDirectGTOrder and not $hasGTCommander and $currentDefaultOrder != 'Assist'"/>
       
       <do_if value="$isPermanentRemoval">
         <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
