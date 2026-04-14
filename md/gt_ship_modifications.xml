@@ -489,14 +489,18 @@
           <return value="false"/>
         </do_if>
 
+        <set_value name="$hadRegistryEntry" exact="global.$GT_Ships? and global.$GT_Ships.{$ship}?"/>
+        <!-- Remove-only cleanup must never recreate registry state for detached ships. -->
+        <set_value name="$trackRegistryState" exact="not $removeGTModsOnly or $hadRegistryEntry"/>
+
         <!-- Ensure tracking tables exist -->
-        <do_if value="not global.$GT_Ships?">
+        <do_if value="$trackRegistryState and not global.$GT_Ships?">
           <set_value name="global.$GT_Ships" exact="table[]"/>
         </do_if>
-        <do_if value="not global.$GT_Ships.{$ship}?">
+        <do_if value="$trackRegistryState and not global.$GT_Ships.{$ship}?">
           <set_value name="global.$GT_Ships.{$ship}" exact="table[]"/>
         </do_if>
-        <do_if value="not global.$GT_Ships.{$ship}.$GTModifications?">
+        <do_if value="$trackRegistryState and not global.$GT_Ships.{$ship}.$GTModifications?">
           <set_value name="global.$GT_Ships.{$ship}.$GTModifications" exact="table[]"/>
         </do_if>
 
@@ -880,6 +884,37 @@
         <do_if value="$currentEngineIsGT and $trackedHasEngineSlot">
           <set_value name="$currentEngineIsNonGT" exact="false"/>
         </do_if>
+        <!-- Force-GT authoritative paths (pilot_assignment/order recycle) can encounter
+             a null-placeholder slot state with hasAny*=true after registry resets.
+             Keep this path single-pass: probe GT ownership via Lua and continue reconcile
+             in the same call (no deferred retry loops). -->
+        <set_value name="$shipNullPlaceholderWithMod" exact="$hasAnyShipMod and (($currentShipModIdRaw == 'null') or ($currentShipModIdRaw == 'none') or ($currentShipModId == null))"/>
+        <set_value name="$engineNullPlaceholderWithMod" exact="$hasAnyEngineMod and (($currentEngineModIdRaw == 'null') or ($currentEngineModIdRaw == 'none') or ($currentEngineModId == null))"/>
+        <set_value name="$forceGTUnresolvedProbe" exact="false"/>
+        <do_if value="$forceGTContext and (
+          ($desiredShipWareId != null and $shipNullPlaceholderWithMod and not $currentShipIsGT and not $trackedHasShipSlot) or
+          ($desiredEngineWareId != null and $engineNullPlaceholderWithMod and not $currentEngineIsGT and not $trackedHasEngineSlot)
+        )">
+          <set_value name="$forceGTUnresolvedProbe" exact="true"/>
+        </do_if>
+        <do_if value="$forceGTUnresolvedProbe">
+          <set_value name="$shipIdCode" exact="@$ship.idcode"/>
+          <raise_lua_event name="'GT_Mods.DismantleDetected'" param="$ship + '|' + (if $shipIdCode? then $shipIdCode else 'UNKNOWN') + '|reconcile-forcegt-probe'"/>
+          <!-- Authoritative GT context: if slot identity is unresolved but desired GT ware exists,
+               treat the slot as GT-managed for this reconcile pass.
+               Lua probe only dismantles known GT wares; non-GT mods remain untouched. -->
+          <do_if value="$desiredShipWareId != null and $shipNullPlaceholderWithMod">
+            <set_value name="$currentShipIsGT" exact="true"/>
+            <set_value name="$currentShipIsNonGT" exact="false"/>
+          </do_if>
+          <do_if value="$desiredEngineWareId != null and $engineNullPlaceholderWithMod">
+            <set_value name="$currentEngineIsGT" exact="true"/>
+            <set_value name="$currentEngineIsNonGT" exact="false"/>
+          </do_if>
+          <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+            <debug_text text="'[GT-Mods] Reconcile forceGT probe applied for ' + $ship.idcode + ' (shipPlaceholder=' + $shipNullPlaceholderWithMod + ', enginePlaceholder=' + $engineNullPlaceholderWithMod + ', trackedShip=' + $trackedHasShipSlot + ', trackedEngine=' + $trackedHasEngineSlot + ', desiredShip=' + (if $desiredShipWareId? then $desiredShipWareId else 'NONE') + ', desiredEngine=' + (if $desiredEngineWareId? then $desiredEngineWareId else 'NONE') + ')'" chance="100"/>
+          </do_if>
+        </do_if>
         <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
           <debug_text text="'[GT-Mods] Reconcile state ship=' + $ship.idcode + ', pilotLevel=' + $pilotLevel + ', class=' + $shipClass + ', desiredPenalty=' + $desiredPenaltyLevel + ', desiredBonus=' + $desiredBonusLevel + ', desiredShip=' + (if $desiredShipWare? then $desiredShipWare else 'NONE') + ', desiredEngine=' + (if $desiredEngineWare? then $desiredEngineWare else 'NONE') + ', hasAnyShip=' + $hasAnyShipMod + ', hasAnyEngine=' + $hasAnyEngineMod + ', currentShip=' + (if $currentShipMod? then $currentShipMod else 'NONE') + ', currentEngine=' + (if $currentEngineMod? then $currentEngineMod else 'NONE') + ', currentShipIsGT=' + $currentShipIsGT + ', currentEngineIsGT=' + $currentEngineIsGT + ', currentShipIsNonGT=' + $currentShipIsNonGT + ', currentEngineIsNonGT=' + $currentEngineIsNonGT + ', unresolvedShip=' + $unresolvedShipMod + ', unresolvedEngine=' + $unresolvedEngineMod + ', trackedShip=' + $trackedHasShipSlot + ', trackedEngine=' + $trackedHasEngineSlot" chance="100"/>
         </do_if>
@@ -920,11 +955,13 @@
             <raise_lua_event name="'GT_Mods.Dismantle'" param="'engine|' + $ship + '|' + (if $shipIdCode? then $shipIdCode else 'UNKNOWN') + '|0|0|' + $engineModToRemove"/>
           </do_if>
 
-          <set_value name="global.$GT_Ships.{$ship}.$GTModifications.$GTInstalledSlots" exact="[]"/>
-          <set_value name="global.$GT_Ships.{$ship}.$GTModifications.$InstalledLevel" exact="0"/>
-          <remove_value name="global.$GT_Ships.{$ship}.$GTModifications.$GTPenaltyShipMod"/>
-          <remove_value name="global.$GT_Ships.{$ship}.$GTModifications.$GTPenaltyEngineMod"/>
-          <remove_value name="global.$GT_Ships.{$ship}.$GTModifications.$GTPenaltyLevel"/>
+          <do_if value="$trackRegistryState">
+            <set_value name="global.$GT_Ships.{$ship}.$GTModifications.$GTInstalledSlots" exact="[]"/>
+            <set_value name="global.$GT_Ships.{$ship}.$GTModifications.$InstalledLevel" exact="0"/>
+            <remove_value name="global.$GT_Ships.{$ship}.$GTModifications.$GTPenaltyShipMod"/>
+            <remove_value name="global.$GT_Ships.{$ship}.$GTModifications.$GTPenaltyEngineMod"/>
+            <remove_value name="global.$GT_Ships.{$ship}.$GTModifications.$GTPenaltyLevel"/>
+          </do_if>
 
           <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
             <debug_text text="'[GT-Mods] Reconcile-disable ' + $ship.idcode + ': removed GT-managed mods only (vanilla mods untouched)'" chance="if @global.$GT_GlobalSettings.$Debug.$EnableDebugLogging then 100 else 0"/>
