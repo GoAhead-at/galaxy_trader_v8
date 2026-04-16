@@ -651,9 +651,11 @@
     
     <!-- Legacy maintenance variables removed - no longer needed with unified maintenance system -->
     
-    <!-- SUBORDINATE HOME BASE INHERITANCE: If subordinate, ALWAYS inherit commander's home -->
+    <!-- SUBORDINATE HOME BASE INHERITANCE:
+         only ship-subordinates inherit commander's home.
+         Station-assigned ships must keep their own station home anchor for serveHomeOnly. -->
     <set_value name="$effectiveHome" exact="$home"/>
-    <do_if value="this.ship.commander and this.ship.commander.exists and this.ship.commander != this.ship">
+    <do_if value="this.ship.commander and this.ship.commander.exists and this.ship.commander != this.ship and not this.ship.commander.isclass.station">
       <!-- Ship is a subordinate - ALWAYS inherit commander's home sector -->
       <do_if value="this.ship.commander.defaultorder and this.ship.commander.defaultorder.$home?">
         <set_value name="$effectiveHome" exact="this.ship.commander.defaultorder.$home"/>
@@ -1550,8 +1552,9 @@
         <set_value name="this.$trackedCommander" exact="$currentCommander"/>
       </do_else>
       
-      <!-- Re-inherit settings from commander if this is a subordinate -->
-      <do_if value="this.ship.commander and this.ship.commander.exists and this.ship.commander != this.ship">
+      <!-- Re-inherit settings only for ship-subordinates.
+           Station commanders must not override MK4 station-home scope. -->
+      <do_if value="this.ship.commander and this.ship.commander.exists and this.ship.commander != this.ship and not this.ship.commander.isclass.station">
         <set_value name="$commanderOrder" exact="this.ship.commander.defaultorder"/>
         <do_if value="$commanderOrder?">
           <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
@@ -2333,7 +2336,7 @@
         <!-- Set flag to indicate maintenance transition for on_abort handler -->
         <set_value name="this.$maintenance_transition" exact="true"/>
         
-        <create_order object="this.ship" id="'Repair'" immediate="false">
+        <create_order object="this.ship" id="'Repair'" immediate="false" priority="true">
             <param name="destination" value="$repairStation"/>
           <param name="hullpercent" value="100"/>
           <param name="repairall" value="true"/>
@@ -4162,48 +4165,11 @@
       <!-- Priority-first reorder: when priority wares are set, put priority-ware trades at the front.
            Score multiplier alone cannot overcome large profit gaps (e.g. 238k Cr vs 2k Cr).
            This guarantees priority wares are tried first during validation. -->
-      <!-- Priority wares: prefer persisted value; fallback to commander for subordinates (survives interrupt).
-           Keep null checks and .count checks separate to avoid property lookup errors. -->
-      <set_value name="$pwForReorder" exact="[]"/>
-      <set_value name="$commanderPriorityWares" exact="[]"/>
-      <set_value name="$thisPriorityCount" exact="0"/>
-      <set_value name="$effectivePriorityCount" exact="0"/>
-      <set_value name="$commanderPriorityCount" exact="0"/>
-      <do_if value="this.$effectivePriorityWares?">
-        <set_value name="$thisPriorityCount" exact="this.$effectivePriorityWares.count"/>
-      </do_if>
-      <do_if value="$effectivePriorityWares?">
-        <set_value name="$effectivePriorityCount" exact="$effectivePriorityWares.count"/>
-      </do_if>
-      <do_if value="$thisPriorityCount gt 0">
-        <set_value name="$pwForReorder" exact="this.$effectivePriorityWares"/>
-      </do_if>
-      <do_elseif value="$effectivePriorityCount gt 0">
-        <set_value name="$pwForReorder" exact="$effectivePriorityWares"/>
-      </do_elseif>
-      <do_else>
-        <do_if value="this.ship.commander? and this.ship.commander.defaultorder?">
-          <do_if value="(@this.ship.commander.defaultorder.id == 'GalaxyTraderMK3' or @this.ship.commander.defaultorder.id == 'GalaxyTraderMK4Supply') and this.ship.commander.defaultorder.$prioritywares?">
-            <set_value name="$commanderPriorityWares" exact="this.ship.commander.defaultorder.$prioritywares"/>
-          </do_if>
-          <do_elseif value="@this.ship.commander.defaultorder.id == 'Assist' and this.ship.commander.defaultorder.$baseorder? and (@this.ship.commander.defaultorder.$baseorder.id == 'GalaxyTraderMK3' or @this.ship.commander.defaultorder.$baseorder.id == 'GalaxyTraderMK4Supply') and this.ship.commander.defaultorder.$baseorder.$prioritywares?">
-            <set_value name="$commanderPriorityWares" exact="this.ship.commander.defaultorder.$baseorder.$prioritywares"/>
-          </do_elseif>
-        </do_if>
-        <do_if value="$commanderPriorityWares?">
-          <set_value name="$commanderPriorityCount" exact="$commanderPriorityWares.count"/>
-        </do_if>
-        <do_if value="$commanderPriorityCount gt 0">
-          <set_value name="$pwForReorder" exact="$commanderPriorityWares"/>
-        </do_if>
-      </do_else>
-      <set_value name="$thisPriorityCountForLog" exact="0"/>
-      <do_if value="this.$effectivePriorityWares?">
-        <set_value name="$thisPriorityCountForLog" exact="this.$effectivePriorityWares.count"/>
-      </do_if>
+      <!-- Priority wares: prefer persisted value; fallback to commander for subordinates (survives interrupt) -->
+      <set_value name="$pwForReorder" exact="if this.$effectivePriorityWares? and this.$effectivePriorityWares.count gt 0 then this.$effectivePriorityWares else (if $effectivePriorityWares? and $effectivePriorityWares.count gt 0 then $effectivePriorityWares else (if this.ship.commander? and this.ship.commander.defaultorder? and (((@this.ship.commander.defaultorder.id == 'GalaxyTraderMK3' or @this.ship.commander.defaultorder.id == 'GalaxyTraderMK4Supply') and this.ship.commander.defaultorder.$prioritywares? and this.ship.commander.defaultorder.$prioritywares.count gt 0) or ((@this.ship.commander.defaultorder.id == 'Assist') and this.ship.commander.defaultorder.$baseorder? and (@this.ship.commander.defaultorder.$baseorder.id == 'GalaxyTraderMK3' or @this.ship.commander.defaultorder.$baseorder.id == 'GalaxyTraderMK4Supply') and this.ship.commander.defaultorder.$baseorder.$prioritywares? and this.ship.commander.defaultorder.$baseorder.$prioritywares.count gt 0)) then (if @this.ship.commander.defaultorder.id == 'Assist' then this.ship.commander.defaultorder.$baseorder.$prioritywares else this.ship.commander.defaultorder.$prioritywares) else []))"/>
       <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging and $tradeList? and $tradeList.count gt 0">
         <do_if value="not $pwForReorder? or $pwForReorder.count == 0">
-          <debug_text text="'[GT-AI] ' + this.ship.idcode + ': Priority-first reorder SKIPPED: no priority wares (this.$effectivePriorityWares=' + $thisPriorityCountForLog + ')'" chance="100"/>
+          <debug_text text="'[GT-AI] ' + this.ship.idcode + ': Priority-first reorder SKIPPED: no priority wares (this.$effectivePriorityWares=' + (if this.$effectivePriorityWares? then this.$effectivePriorityWares.count else '?') + ')'" chance="100"/>
         </do_if>
       </do_if>
       <do_if value="$pwForReorder? and $pwForReorder.count gt 0 and $tradeList? and $tradeList.count gt 0">
@@ -4263,7 +4229,7 @@
       <do_else>
         <!-- Diagnostic: reorder skipped because priority wares not available (e.g. not persisted after interrupt) -->
         <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging and $tradeList? and $tradeList.count gt 0 and (not $pwForReorder? or $pwForReorder.count == 0)">
-          <debug_text text="'[GT-AI] ' + this.ship.idcode + ': Priority-first reorder SKIPPED: no priority wares (this.$effectivePriorityWares=' + $thisPriorityCountForLog + ')'" chance="100"/>
+          <debug_text text="'[GT-AI] ' + this.ship.idcode + ': Priority-first reorder SKIPPED: no priority wares (this.$effectivePriorityWares=' + (if this.$effectivePriorityWares? then this.$effectivePriorityWares.count else 'null') + ')'" chance="100"/>
         </do_if>
       </do_else>
 
@@ -8583,7 +8549,7 @@
         <set_command_action commandaction="commandaction.calculating"/>
         
         <!-- Create repair order -->
-        <create_order object="this.ship" id="'Repair'" immediate="true">
+        <create_order object="this.ship" id="'Repair'" immediate="true" priority="true">
           <param name="destination" value="$repairStation"/>
           <param name="repairall" value="true"/>
         </create_order>

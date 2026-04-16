@@ -5,7 +5,8 @@ Version 0.13.1 (2026-04-16)
 FIX: Galaxy Miner null-ware hardening in `order.trade.galaxyminer` now guards urgency lookup, reservation fetches, assignment/intent table access, cargo snapshots, and debug formatting against `{null}` ware indices.
 FIX: Galaxy Miner run-basket creation is now null-safe (`[]` when no selected ware), preventing downstream `this.ship.cargo.{null}` and `table[].{null}` lookup failures in per-ware cargo accounting.
 FIX: Diagnose miner context in `gt_context_diagnose.xml` now uses explicit two-step null guards before `.hastag`/cargo checks on `$diagMinerSelectedWare`, preventing intermittent UI/MD null property lookup errors.
-CHANGE: XP-blocked logbook message styling is now neutral (non-highlighted) instead of alert-highlighted.
+CHANGE: DISABLED XP-blocked logbook message
+FIX: MK4 Supply `serveHomeOnly` now preserves station-home scope for station-assigned ships (no unintended commander-home override), so dedicated suppliers remain restricted to their configured home station while sector-home ships keep sector-wide scope.
 
 Version 0.13.0 (2026-04-15)
 REFACTOR: Removed unreachable legacy `ExecuteTrade` scaffold in `gt_trading_execution.xml` (bridge-only cue retained for stale callers), reducing dead code and simplifying maintenance.

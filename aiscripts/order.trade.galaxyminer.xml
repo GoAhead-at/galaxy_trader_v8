@@ -120,7 +120,7 @@
     <do_if value="not $homePositionValid and $homeSector? and $homeSector.exists">
       <set_value name="$homePosition" exact="[$homeSector, $homeSector.coreposition]"/>
       <set_value name="$homePositionValid" exact="true"/>
-      <do_if value="this.ship.order? and this.ship.order.exists">
+      <do_if value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
         <edit_order_param order="this.ship.order" param="'homePosition'" value="$homePosition"/>
       </do_if>
       <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
@@ -136,7 +136,7 @@
     <do_if value="not $assignToStation and $homeStation? and $homeStation.exists">
       <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': assignToStation disabled -> clearing homeStation ' + $homeStation.idcode" chance="$debugchance"/>
       <set_value name="$homeStation" exact="null"/>
-      <do_if value="this.ship.order? and this.ship.order.exists">
+      <do_if value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
         <edit_order_param order="this.ship.order" param="'homeStation'" value="null"/>
       </do_if>
       <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
@@ -151,7 +151,7 @@
       <set_value name="$homeSector" exact="this.sector"/>
       <set_value name="$homePosition" exact="[$homeSector, $homeSector.coreposition]"/>
       <set_value name="$homePositionValid" exact="true"/>
-      <do_if value="this.ship.order? and this.ship.order.exists">
+      <do_if value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
         <edit_order_param order="this.ship.order" param="'homePosition'" value="$homePosition"/>
         <edit_order_param order="this.ship.order" param="'homeSector'" value="$homeSector"/>
       </do_if>
@@ -307,12 +307,34 @@
       <!-- Runtime sync for assignToStation toggle edits -->
       <set_value name="this.$assignToStation" exact="$assignToStation"/>
       <set_value name="this.$playerStationsOnly" exact="$playerStationsOnly"/>
+      <!-- Runtime source-of-truth sync:
+           refresh anchor/station params from the live GalaxyMiner order object so
+           stale instance state cannot keep target station count at 0. -->
+      <set_value name="$runtimeMinerOrder" exact="null"/>
+      <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and @this.ship.defaultorder.id == 'GalaxyMiner'">
+        <set_value name="$runtimeMinerOrder" exact="this.ship.defaultorder"/>
+      </do_if>
+      <do_elseif value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
+        <set_value name="$runtimeMinerOrder" exact="this.ship.order"/>
+      </do_elseif>
+      <do_if value="$runtimeMinerOrder? and $runtimeMinerOrder.$homeStation? and $runtimeMinerOrder.$homeStation.exists">
+        <set_value name="this.$homeStation" exact="$runtimeMinerOrder.$homeStation"/>
+      </do_if>
+      <do_if value="$runtimeMinerOrder? and $runtimeMinerOrder.$homeSector? and $runtimeMinerOrder.$homeSector.exists">
+        <set_value name="this.$homeSector" exact="$runtimeMinerOrder.$homeSector"/>
+      </do_if>
+      <do_if value="$runtimeMinerOrder? and $runtimeMinerOrder.$homePosition?">
+        <set_value name="this.$homePosition" exact="$runtimeMinerOrder.$homePosition"/>
+      </do_if>
+      <do_if value="$runtimeMinerOrder? and $runtimeMinerOrder.$stationList?">
+        <set_value name="this.$stationList" exact="$runtimeMinerOrder.$stationList"/>
+      </do_if>
       <do_if value="not this.$assignToStation">
         <do_if value="$homeStation? and $homeStation.exists">
           <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': assignToStation runtime-off -> clearing homeStation ' + $homeStation.idcode" chance="this.$debugchance"/>
           <set_value name="$homeStation" exact="null"/>
           <set_value name="this.$homeStation" exact="null"/>
-          <do_if value="this.ship.order? and this.ship.order.exists">
+          <do_if value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
             <edit_order_param order="this.ship.order" param="'homeStation'" value="null"/>
           </do_if>
           <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
@@ -396,7 +418,12 @@
           </do_if>
         </do_all>
       </do_if>
-      <do_else>
+      <!-- Always include explicit home station as a valid demand anchor. -->
+      <do_if value="this.$homeStation? and this.$homeStation.exists and this.$homeStation.isoperational and ((not this.$playerStationsOnly) or (this.$homeStation.owner == this.owner)) and not $targetStations.indexof.{this.$homeStation}">
+        <append_to_list name="$targetStations" exact="this.$homeStation"/>
+      </do_if>
+      <!-- If station list produced no valid targets, fall back to sector discovery. -->
+      <do_if value="$targetStations.count == 0">
         <do_if value="this.$homeStation? and this.$homeStation.exists and this.$homeStation.isoperational and ((not this.$playerStationsOnly) or (this.$homeStation.owner == this.owner))">
           <append_to_list name="$targetStations" exact="this.$homeStation"/>
         </do_if>
@@ -428,7 +455,7 @@
             </do_if>
           </do_all>
         </do_else>
-      </do_else>
+      </do_if>
 
       <!-- Demand is derived from the actively served station set. -->
       <create_list name="$demandStations"/>
@@ -545,11 +572,9 @@
         <set_value name="$wareIsReachable" exact="false"/>
         <do_all exact="$wareReachabilityGatherSpaces.count" counter="$gsi">
           <set_value name="$gatherSectorEval" exact="$wareReachabilityGatherSpaces.{$gsi}"/>
-          <set_value name="$sectorYieldRating" exact="-1"/>
-          <do_if value="$gatherSectorEval? and $gatherSectorEval.exists and $gatherSectorEval.isclass.sector and $gatherSectorEval.yieldrating.{$wareEval}?">
-            <set_value name="$sectorYieldRating" exact="@$gatherSectorEval.yieldrating.{$wareEval}"/>
-          </do_if>
-          <do_if value="$gatherSectorEval? and $gatherSectorEval.exists and $gatherSectorEval.isclass.sector and $gatherSectorEval.resources.{$wareEval}.exists and $sectorYieldRating ge this.$minReachableYieldRating">
+          <!-- Vanilla/v8-safe reachability gate:
+               sector exposes resource for this ware. -->
+          <do_if value="$gatherSectorEval? and $gatherSectorEval.exists and $gatherSectorEval.isclass.sector and $gatherSectorEval.resources.{$wareEval}.exists">
             <set_value name="$wareIsReachable" exact="true"/>
             <break/>
           </do_if>

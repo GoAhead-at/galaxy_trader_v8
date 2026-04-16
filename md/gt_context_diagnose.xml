@@ -1705,6 +1705,71 @@
 
         <append_to_list name="$report.$Sections" exact="$sec7"/>
         </do_if>
+        <do_if value="not $isClearanceMode and $orderId == 'GalaxyMiner'">
+        <set_value name="$sec7" exact="table[]"/>
+        <set_value name="$sec7.$Name" exact="'Resource Discovery'"/>
+        <set_value name="$sec7.$Rows" exact="[]"/>
+
+        <set_value name="$diagMinerGatherRef" exact="if $homeSector? and $homeSector.exists then $homeSector else $ship.sector"/>
+        <set_value name="$diagMinerGatherAnchorText" exact="if $diagMinerGatherRef? and $diagMinerGatherRef.exists then $diagMinerGatherRef.knownname else 'unknown'"/>
+        <set_value name="$diagMinerStayAtHome" exact="false"/>
+        <do_if value="$gtOrder? and $gtOrder.$stayAtHome?">
+          <set_value name="$diagMinerStayAtHome" exact="$gtOrder.$stayAtHome"/>
+        </do_if>
+        <set_value name="$diagMinerGatherDistance" exact="if $diagMinerStayAtHome then 0 else $maxBuy"/>
+        <find_sector name="$diagMinerGatherSectors" space="player.galaxy" multiple="true">
+          <match_gate_distance object="$diagMinerGatherRef" min="0" max="$diagMinerGatherDistance"/>
+        </find_sector>
+        <do_if value="$ship.isplayerowned and $diagMinerGatherDistance le 0 and $diagMinerGatherRef? and $diagMinerGatherRef.exists and $diagMinerGatherRef.isclass.sector and not $diagMinerGatherSectors.indexof.{$diagMinerGatherRef}">
+          <append_to_list name="$diagMinerGatherSectors" exact="$diagMinerGatherRef"/>
+        </do_if>
+        <append_to_list name="$sec7.$Rows" exact="table[$Check = 'Gather Anchor', $Status = 'INFO', $Detail = $diagMinerGatherAnchorText]"/>
+        <append_to_list name="$sec7.$Rows" exact="table[$Check = 'Gather Range', $Status = 'INFO', $Detail = '' + $diagMinerGatherDistance + ' jumps' + (if $diagMinerStayAtHome then ' (stay-at-home)' else '')]"/>
+        <append_to_list name="$sec7.$Rows" exact="table[$Check = 'Gather Sectors', $Status = if $diagMinerGatherSectors.count gt 0 then 'PASS' else 'FAIL', $Detail = '' + $diagMinerGatherSectors.count + ' sectors']"/>
+
+        <set_value name="$diagMinerDiscoveryWares" exact="[]"/>
+        <do_all exact="$diagMinerOfferWares.count" counter="$mwi">
+          <set_value name="$diagW" exact="$diagMinerOfferWares.{$mwi}"/>
+          <do_if value="$diagW? and $diagW != null and not $diagMinerDiscoveryWares.indexof.{$diagW}">
+            <append_to_list name="$diagMinerDiscoveryWares" exact="$diagW"/>
+          </do_if>
+        </do_all>
+        <do_if value="$diagMinerDiscoveryWares.count == 0 and $ship.warebasket? and $ship.warebasket.list? and $ship.warebasket.list.count gt 0">
+          <do_all exact="$ship.warebasket.list.count" counter="$mwi">
+            <set_value name="$diagW" exact="$ship.warebasket.list.{$mwi}"/>
+            <do_if value="$diagW? and $diagW.hastag.minable and $ship.cargo.{$diagW}.max gt 0 and not $diagMinerDiscoveryWares.indexof.{$diagW}">
+              <append_to_list name="$diagMinerDiscoveryWares" exact="$diagW"/>
+            </do_if>
+          </do_all>
+        </do_if>
+        <append_to_list name="$sec7.$Rows" exact="table[$Check = 'Discovery Wares', $Status = if $diagMinerDiscoveryWares.count gt 0 then 'PASS' else 'WARN', $Detail = '' + $diagMinerDiscoveryWares.count + ' wares']"/>
+
+        <set_value name="$diagMinerReachableWares" exact="0"/>
+        <do_all exact="$diagMinerDiscoveryWares.count" counter="$mwi">
+          <set_value name="$diagWare" exact="$diagMinerDiscoveryWares.{$mwi}"/>
+          <set_value name="$diagReachable" exact="false"/>
+          <set_value name="$diagReachableSectorName" exact="'none'"/>
+          <do_all exact="$diagMinerGatherSectors.count" counter="$gsi">
+            <set_value name="$diagSec" exact="$diagMinerGatherSectors.{$gsi}"/>
+            <set_value name="$diagAverageYield" exact="0"/>
+            <do_if value="$diagSec? and $diagSec.exists and $diagSec.isclass.sector and $diagSec.averagemaxyield.{$diagWare}.count?">
+              <set_value name="$diagAverageYield" exact="$diagSec.averagemaxyield.{$diagWare}.count"/>
+            </do_if>
+            <do_if value="$diagSec? and $diagSec.exists and $diagSec.isclass.sector and $diagSec.resources.{$diagWare}.exists">
+              <set_value name="$diagReachable" exact="true"/>
+              <set_value name="$diagReachableSectorName" exact="$diagSec.knownname + ' (avg yield ' + $diagAverageYield + ')'"/>
+              <break/>
+            </do_if>
+          </do_all>
+          <do_if value="$diagReachable">
+            <set_value name="$diagMinerReachableWares" operation="add"/>
+          </do_if>
+          <append_to_list name="$sec7.$Rows" exact="table[$Check = if $diagWare? and $diagWare.name? then $diagWare.name else '?', $Status = if $diagReachable then 'PASS' else 'FAIL', $Detail = if $diagReachable then ('reachable in ' + $diagReachableSectorName) else 'no reachable resource sector in gather range']"/>
+        </do_all>
+        <append_to_list name="$sec7.$Rows" exact="table[$Check = 'Reachable Resource Wares', $Status = if $diagMinerReachableWares gt 0 then 'PASS' else 'FAIL', $Detail = '' + $diagMinerReachableWares + ' / ' + $diagMinerDiscoveryWares.count]"/>
+
+        <append_to_list name="$report.$Sections" exact="$sec7"/>
+        </do_if>
 
         <!-- ======================================================== -->
         <!-- Compute search sectors (needed by both live search and   -->
