@@ -1412,21 +1412,6 @@
               <append_to_list name="$diagMinerOfferWares" exact="$mWare"/>
             </do_if>
           </do_all>
-          <!-- Fallback for empty-cargo miners:
-               derive diagnose wares from configured primary station demand targets. -->
-          <do_if value="$diagMinerOfferWares.count == 0 and $diagMinerPrimaryStations.count gt 0">
-            <do_all exact="$diagMinerPrimaryStations.count" counter="$dpsi">
-              <set_value name="$diagPrimaryStation" exact="$diagMinerPrimaryStations.{$dpsi}"/>
-              <do_if value="$diagPrimaryStation? and $diagPrimaryStation.exists">
-                <do_all exact="$diagPrimaryStation.cargo.list.count" counter="$dwsi">
-                  <set_value name="$diagDemandWare" exact="$diagPrimaryStation.cargo.list.{$dwsi}"/>
-                  <do_if value="$diagDemandWare? and $diagDemandWare.hastag.minable and $ship.cargo.{$diagDemandWare}.max gt 0 and $diagPrimaryStation.cargo.{$diagDemandWare}.target gt 0 and not $diagMinerOfferWares.indexof.{$diagDemandWare}">
-                    <append_to_list name="$diagMinerOfferWares" exact="$diagDemandWare"/>
-                  </do_if>
-                </do_all>
-              </do_if>
-            </do_all>
-          </do_if>
           <do_if value="$diagMinerOfferWares.count gt 0">
             <set_value name="$diagMinerOfferWaresNames" exact="''"/>
             <do_all exact="$diagMinerOfferWares.count" counter="$mwni">
@@ -2905,9 +2890,11 @@
           <set_value name="$verdict" exact="'BLOCKED: Global money cap active — fleet budget exhausted'"/>
           <append_to_list name="$suggestions" exact="'Earn more money to lift the money cap'"/>
         </do_elseif>
-        <!-- Priority 4: No offers at all -->
+        <!-- Priority 4: No offers at all (order-aware)
+             Miner diagnose only searches buyer offers (ship sells to station),
+             so a missing seller side must not trigger a false "No sell offers" verdict. -->
         <do_elseif value="($orderId == 'GalaxyMiner' and $allBuyOffers.count == 0) or ($orderId != 'GalaxyMiner' and ($allSellOffers.count == 0 or $allBuyOffers.count == 0))">
-          <set_value name="$verdict" exact="'NO OFFERS: ' + (if $orderId == 'GalaxyMiner' then 'No buyer offers' else (if $allSellOffers.count == 0 then 'No sell offers' else 'No buy offers')) + ' found in ' + $searchSectors.count + ' sectors'"/>
+          <set_value name="$verdict" exact="'NO OFFERS: ' + (if $orderId == 'GalaxyMiner' then 'No buy offers' else (if $allSellOffers.count == 0 then 'No sell offers' else 'No buy offers')) + ' found in ' + $searchSectors.count + ' sectors'"/>
           <append_to_list name="$suggestions" exact="'Increase max distance to expand search radius'"/>
           <append_to_list name="$suggestions" exact="'Check if sectors have operational stations'"/>
         </do_elseif>
