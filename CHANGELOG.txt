@@ -1,6 +1,19 @@
 GalaxyTrader - Changelog
 ========================================
 
+Version 0.13.1 (2026-04-16)
+FIX: Galaxy Miner null-ware hardening in `order.trade.galaxyminer` now guards urgency lookup, reservation fetches, assignment/intent table access, cargo snapshots, and debug formatting against `{null}` ware indices.
+FIX: Galaxy Miner run-basket creation is now null-safe (`[]` when no selected ware), preventing downstream `this.ship.cargo.{null}` and `table[].{null}` lookup failures in per-ware cargo accounting.
+FIX: Diagnose miner context in `gt_context_diagnose.xml` now uses explicit two-step null guards before `.hastag`/cargo checks on `$diagMinerSelectedWare`, preventing intermittent UI/MD null property lookup errors.
+
+
+Version 0.13.0 (2026-04-15)
+REFACTOR: Removed unreachable legacy `ExecuteTrade` scaffold in `gt_trading_execution.xml` (bridge-only cue retained for stale callers), reducing dead code and simplifying maintenance.
+FIX: Reservation-aware demand subtraction is now applied in `lib.gt.tradematch` for all trade modes (including MK3), not only MK4 supply mode.
+FIX: Effective destination demand now subtracts both vanilla incoming reservations (`get_ware_reservation`) and GT in-flight reservations before trade acceptance, preventing storage overfill selection paths.
+
+
+
 Version 0.12.10 (2026-04-13)
 FIX: Ship modifications now reconcile for fleet commanders when the ship still has a direct GT default order but GT order-status briefly reported non-GT (subordinates were unaffected).
 FIX: Save-load ghost Galaxy Miner state now self-heals for legacy saves (ships stuck with `default/current=GalaxyMiner` but no active orders are restarted once on load).
@@ -37,14 +50,14 @@ FIX: MK3 detached/orphaned subordinate cleanup now always cancels active/default
 FIX: MK3 trade-search scheduler now self-heals stale per-ship live-active state (`LiveActiveShips` / `PhaseStateByShip`) before dedup checks, preventing ships from getting stuck as permanently active/not-queued.
 FIX: MK3 `GT_ClearPendingTradeData` now always aborts scheduler state via `GT_Search_Abort` before request-registry release; deep registry cleanup also runs for `ship_destroyed` paths.
 FIX: MK3 buy clamp now uses `buyer="this.assignedcontrolled"` (vanilla parity) to avoid invalid buyer context during amount clamping.
-FIX: MK3 stale temporary ship accounts are now auto-cleared (vanilla parity) at init and during runtime pre-search self-heal when no active tradeorders exist, allowing affected ships
+FIX: MK3 stale temporary ship accounts are now auto-cleared (vanilla parity) at init and during runtime pre-search self-heal when no active tradeorders exist, allowing affected ships to recover without remove/reattach.
 CHANGE: MK1 sell policy now allows zero-profit fulfillment: trades are valid up to the station buy-price cap (e.g. station price 12 Cr allows sell price 12 Cr), while negative-profit trades remain rejected.
 FIX: Galaxy Miner home anchor UI now uses a position selector (`homePosition`, class.sector) and derives `homeSector` from it, avoiding sector-selector UI issues for affected players.
 CHANGE: Legacy Galaxy Miner orders/saves with `homeSector` are auto-migrated to `homePosition` at runtime while preserving backward compatibility.
-FIX: Galaxy Miner now performs a preflight `find_closest_resource` check for the selected ware before issuing `order.mining.routine.gt`; if no reachable node exists this cycle, it waits/retries instead of issuing a failing mining slice.
-FIX: `order.mining.routine.gt` no longer hard-fails the parent order on "No resources found" when called by `GalaxyMiner`; it logs and continues the loop so the miner can re-evaluate wares next cycle.
+FIX: MK1 multi-trade logbook output now reports each queued trip/leg with per-leg buy/sell price and per-leg profit instead of effectively showing only the first leg.
 FIX: MK1 queued trade logging now uses trade-match snapshot prices (`$BuyPrice`/`$SellPrice`) for per-leg P/L payloads, preventing drift/negative artifacts from late live-offer price changes.
 IMPROVEMENT: MK1 multi-trade cycles now write an aggregate route summary entry with trip count and total cycle profit.
+
 
 Version 0.12.6 (2026-04-10)
 FIX: Galaxy Miner ware selection now filters unreachable wares before scoring; wares without any reachable resource sector in current gather range are skipped instead of causing "No resources found in range" order failures.

@@ -483,6 +483,15 @@
           </do_all>
         </do_all>
       </do_if>
+      <!-- Normalize candidate list to avoid null key/index lookups in later scoring tables. -->
+      <set_value name="$candidateWaresNormalized" exact="[]"/>
+      <do_all exact="$candidateWares.count" counter="$wi">
+        <set_value name="$candidateWare" exact="$candidateWares.{$wi}"/>
+        <do_if value="$candidateWare? and $candidateWare != null and this.ship.cargo.{$candidateWare}.max gt 0 and not $candidateWaresNormalized.indexof.{$candidateWare}">
+          <append_to_list name="$candidateWaresNormalized" exact="$candidateWare"/>
+        </do_if>
+      </do_all>
+      <set_value name="$candidateWares" exact="$candidateWaresNormalized"/>
 
       <do_if value="$candidateWares.count == 0">
         <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': No mineable wares. demandStationCount=' + $demandStations.count + ', resourceBasketCount=' + (if this.$resourceBasket? then this.$resourceBasket.count else 0) + ', shipMineableCount=' + (if $shipMineableBasket? then $shipMineableBasket.count else 0) + ', restrictToShipBasket=' + $restrictToShipBasket" chance="this.$debugchance"/>
@@ -492,10 +501,12 @@
       </do_if>
 
       <!-- Clear previous cycle assignment/intent records for this ship -->
-      <do_if value="this.$minerAssignedWare? and this.$minerAssignedStations? and this.$minerAssignedStations.count gt 0">
+      <do_if value="this.$minerAssignedWare? and this.$minerAssignedWare != null and this.$minerAssignedStations? and this.$minerAssignedStations.count gt 0">
         <do_all exact="this.$minerAssignedStations.count" counter="$asi">
           <set_value name="$assignedStation" exact="this.$minerAssignedStations.{$asi}"/>
-          <remove_value name="global.$GT_MinerStationAssignments.{$assignedStation}.{this.$minerAssignedWare}.{this.ship}"/>
+          <do_if value="$assignedStation? and $assignedStation != null and global.$GT_MinerStationAssignments? and global.$GT_MinerStationAssignments.{$assignedStation}? and global.$GT_MinerStationAssignments.{$assignedStation}.{this.$minerAssignedWare}?">
+            <remove_value name="global.$GT_MinerStationAssignments.{$assignedStation}.{this.$minerAssignedWare}.{this.ship}"/>
+          </do_if>
         </do_all>
       </do_if>
       <do_if value="this.$minerIntentWare? and this.$minerIntentWare != null and this.$minerIntentStations? and this.$minerIntentStations.count gt 0">
@@ -528,6 +539,9 @@
       </do_if>
       <do_all exact="$candidateWares.count" counter="$wi">
         <set_value name="$wareEval" exact="$candidateWares.{$wi}"/>
+        <do_if value="not $wareEval? or $wareEval == null">
+          <continue/>
+        </do_if>
         <set_value name="$wareIsReachable" exact="false"/>
         <do_all exact="$wareReachabilityGatherSpaces.count" counter="$gsi">
           <set_value name="$gatherSectorEval" exact="$wareReachabilityGatherSpaces.{$gsi}"/>
@@ -570,7 +584,9 @@
                 </do_all>
               </do_if>
             <!-- Count vanilla real trade reservations and merge with GT intents without double counting overlap. -->
-            <get_ware_reservation object="$stationEval" ware="$wareEval" type="sell" result="$reservedIncoming"/>
+            <do_if value="$wareEval? and $wareEval != null">
+              <get_ware_reservation object="$stationEval" ware="$wareEval" type="sell" result="$reservedIncoming"/>
+            </do_if>
             <set_value name="$effectiveIncoming" exact="[$projectedIncoming, $reservedIncoming].max"/>
             <set_value name="$projectedStock" exact="$currentAmount + $effectiveIncoming"/>
             <set_value name="$deficitAmount" exact="[0, $targetAmount - $projectedStock].max"/>
@@ -602,14 +618,14 @@
         <set_value name="$selectedWare" exact="$bestWare"/>
       </do_if>
       <set_value name="$selectedUrgency" exact="0"/>
-      <do_if value="$selectedWare? and $wareUrgency.{$selectedWare}?">
+      <do_if value="$selectedWare? and $selectedWare != null and $wareUrgency.{$selectedWare}?">
         <set_value name="$selectedUrgency" exact="$wareUrgency.{$selectedWare}"/>
       </do_if>
       <set_value name="$pilotLevel" exact="1"/>
       <do_if value="this.ship.pilot? and global.$GT_Pilots? and global.$GT_Pilots.{this.ship.pilot}? and global.$GT_Pilots.{this.ship.pilot}.$Level?">
         <set_value name="$pilotLevel" exact="global.$GT_Pilots.{this.ship.pilot}.$Level"/>
       </do_if>
-      <do_if value="$pilotLevel ge 9 and $bestWare? and $selectedWare? and $bestWare != $selectedWare">
+      <do_if value="$pilotLevel ge 9 and $bestWare? and $bestWare != null and $selectedWare? and $selectedWare != null and $bestWare != $selectedWare">
         <set_value name="$switchDelta" exact="$bestUrgency - $selectedUrgency"/>
         <set_value name="$cooldownReady" exact="(this.$lastWareSwitchAt == 0s) or ((player.age - this.$lastWareSwitchAt) ge this.$minSwitchCooldown)"/>
         <set_value name="$cargoCommitPercent" exact="0"/>
@@ -623,18 +639,18 @@
         </do_if>
       </do_if>
 
-      <do_if value="not $selectedWare?">
+      <do_if value="not $selectedWare? or $selectedWare == null">
         <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': No selected ware after demand scoring. bestWare=' + (if $bestWare? then $bestWare.name else 'NONE') + ', bestUrgency=' + $bestUrgency + ', activeWare=' + (if this.$activeMiningWare? then this.$activeMiningWare.name else 'NONE')" chance="this.$debugchance"/>
         <wait exact="this.$demandRecheckInterval"/>
         <resume label="main_loop"/>
       </do_if>
       <set_value name="this.$activeMiningWare" exact="$selectedWare"/>
-      <set_value name="this.$activeMiningUrgency" exact="$wareUrgency.{$selectedWare}"/>
+      <set_value name="this.$activeMiningUrgency" exact="if $selectedWare? and $selectedWare != null and $wareUrgency.{$selectedWare}? then $wareUrgency.{$selectedWare} else 0"/>
 
       <!-- Overflow handling: if all primary targets are full, optionally allow overflow sell -->
       <set_value name="$overflowSellMode" exact="false"/>
       <set_value name="$primaryCapacityAvailable" exact="true"/>
-      <do_if value="$wareHasPrimaryCapacity.{$selectedWare}? and not $wareHasPrimaryCapacity.{$selectedWare}">
+      <do_if value="$selectedWare? and $selectedWare != null and $wareHasPrimaryCapacity.{$selectedWare}? and not $wareHasPrimaryCapacity.{$selectedWare}">
         <set_value name="$overflowSellMode" exact="true"/>
         <set_value name="$primaryCapacityAvailable" exact="false"/>
       </do_if>
@@ -694,15 +710,16 @@
       </do_if>
 
       <do_if value="$overflowSellMode and not this.$allowOverflowSellToOthers">
-        <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Overflow wait. selected=' + $selectedWare.name + ', urgency=' + this.$activeMiningUrgency + ', overflowAllowed=0'" chance="this.$debugchance"/>
+        <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Overflow wait. selected=' + (if $selectedWare? and $selectedWare != null then $selectedWare.name else 'null') + ', urgency=' + this.$activeMiningUrgency + ', overflowAllowed=0'" chance="this.$debugchance"/>
         <wait exact="this.$demandRecheckInterval"/>
         <resume label="main_loop"/>
       </do_if>
+      <set_value name="$hasSelectedWare" exact="$selectedWare? and $selectedWare != null"/>
 
       <!-- Choose concrete primary delivery station for selected ware -->
       <set_value name="$primaryDeliveryStation" exact="null"/>
       <set_value name="$primaryBestDeficit" exact="-1"/>
-      <do_if value="$selectedWare? and $demandStations.count gt 0 and not $overflowSellMode">
+      <do_if value="$hasSelectedWare and $demandStations.count gt 0 and not $overflowSellMode">
         <do_all exact="$demandStations.count" counter="$tsi">
           <set_value name="$stationEval" exact="$demandStations.{$tsi}"/>
           <set_value name="$targetAmount" exact="$stationEval.cargo.{$selectedWare}.target"/>
@@ -728,7 +745,9 @@
                 </do_if>
               </do_all>
             </do_if>
-            <get_ware_reservation object="$stationEval" ware="$selectedWare" type="sell" result="$reservedIncoming"/>
+            <do_if value="$selectedWare? and $selectedWare != null">
+              <get_ware_reservation object="$stationEval" ware="$selectedWare" type="sell" result="$reservedIncoming"/>
+            </do_if>
             <set_value name="$effectiveIncoming" exact="[$projectedIncoming, $reservedIncoming].max"/>
             <set_value name="$projectedStock" exact="$currentAmount + $effectiveIncoming"/>
             <set_value name="$storagePercent" exact="($projectedStock * 100) / [$targetAmount, 1].max"/>
@@ -758,7 +777,7 @@
       <set_value name="this.$minerOverflowCommanderBackup" exact="null"/>
 
       <!-- Register deterministic station assignments and live intents -->
-      <do_if value="this.$fleetBalancing and $selectedWare? and $demandStations.count gt 0">
+      <do_if value="this.$fleetBalancing and $hasSelectedWare and $demandStations.count gt 0">
         <set_value name="this.$minerAssignedWare" exact="$selectedWare"/>
         <do_all exact="$demandStations.count" counter="$tsi">
           <set_value name="$stationEval" exact="$demandStations.{$tsi}"/>
@@ -798,7 +817,9 @@
                 </do_if>
               </do_all>
             </do_if>
-            <get_ware_reservation object="$stationEval" ware="$selectedWare" type="sell" result="$reservedIncoming"/>
+            <do_if value="$selectedWare? and $selectedWare != null">
+              <get_ware_reservation object="$stationEval" ware="$selectedWare" type="sell" result="$reservedIncoming"/>
+            </do_if>
             <set_value name="$effectiveIncoming" exact="[$projectedIncoming, $reservedIncoming].max"/>
             <set_value name="$deficitAmount" exact="[0, $targetAmount - ($currentAmount + $effectiveIncoming)].max"/>
             <set_value name="$supplierCount" exact="[1, global.$GT_MinerStationAssignments.{$stationEval}.{$selectedWare}.keys.count].max"/>
@@ -841,7 +862,7 @@
       <!-- Lightweight diagnostics snapshot for GT Diagnose -->
       <set_value name="$diagSupplierCount" exact="0"/>
       <set_value name="$diagIntentCount" exact="0"/>
-      <do_if value="$selectedWare? and $demandStations.count gt 0">
+      <do_if value="$hasSelectedWare and $demandStations.count gt 0">
         <do_all exact="$demandStations.count" counter="$tsi">
           <set_value name="$stationEval" exact="$demandStations.{$tsi}"/>
           <do_if value="global.$GT_MinerStationAssignments? and global.$GT_MinerStationAssignments.{$stationEval}? and global.$GT_MinerStationAssignments.{$stationEval}.{$selectedWare}?">
@@ -931,7 +952,7 @@
           <set_value name="$effectiveMaxSellDistanceHomeSafe" exact="$homeStationDistance"/>
         </do_if>
       </do_if>
-      <set_value name="$runWareBasket" exact="[$selectedWare]"/>
+      <set_value name="$runWareBasket" exact="if $hasSelectedWare then [$selectedWare] else []"/>
       <set_value name="$minbuy" exact="0"/>
       <set_value name="$maxbuy" exact="if this.$stayAtHome then 0 else $effectiveMaxGatherDistance"/>
       <set_value name="$minsell" exact="0"/>
@@ -946,14 +967,16 @@
         <set_value name="this.$miner_prevCargoByWare.{$wareCheck}" exact="this.ship.cargo.{$wareCheck}.count"/>
         <set_value name="this.$miner_prevCargoTotal" exact="this.$miner_prevCargoTotal + this.ship.cargo.{$wareCheck}.count"/>
       </do_all>
-      <do_all exact="$demandStations.count" counter="$tsi">
-        <set_value name="$stationEval" exact="$demandStations.{$tsi}"/>
-        <set_value name="this.$miner_prevStationCargoByStation.{$stationEval}" exact="$stationEval.cargo.{$selectedWare}.count"/>
-      </do_all>
-      <do_if value="this.$miner_prevDockedStation? and this.$miner_prevDockedStation.exists and not this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}?">
-        <set_value name="this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}" exact="this.$miner_prevDockedStation.cargo.{$selectedWare}.count"/>
+      <do_if value="$hasSelectedWare">
+        <do_all exact="$demandStations.count" counter="$tsi">
+          <set_value name="$stationEval" exact="$demandStations.{$tsi}"/>
+          <set_value name="this.$miner_prevStationCargoByStation.{$stationEval}" exact="$stationEval.cargo.{$selectedWare}.count"/>
+        </do_all>
+        <do_if value="this.$miner_prevDockedStation? and this.$miner_prevDockedStation.exists and not this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}?">
+          <set_value name="this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}" exact="this.$miner_prevDockedStation.cargo.{$selectedWare}.count"/>
+        </do_if>
       </do_if>
-      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Run mining slice ware=' + $selectedWare.name + ', urgency=' + this.$activeMiningUrgency + ', overflow=' + $overflowSellMode + ', primaryStation=' + (if $primaryDeliveryStation? and $primaryDeliveryStation.exists then $primaryDeliveryStation.idcode else 'NONE') + ', range=' + (if $range? then $range.knownname else 'null') + ', rangeClass=' + (if $range? then $range.class else 'null') + ', stayAtHome=' + this.$stayAtHome + ', minbuy=' + $minbuy + ', maxbuy=' + $maxbuy + ', minsell=' + $minsell + ', maxsell=' + $maxsell + ', cargoBefore=' + this.$miner_prevCargoTotal + ', commander=' + (if this.ship.commander? and this.ship.commander.exists then this.ship.commander.idcode else 'NONE') + ', default=' + (if this.ship.defaultorder? then @this.ship.defaultorder.id else 'NONE')" chance="this.$debugchance"/>
+      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Run mining slice ware=' + (if $hasSelectedWare then $selectedWare.name else 'null') + ', urgency=' + this.$activeMiningUrgency + ', overflow=' + $overflowSellMode + ', primaryStation=' + (if $primaryDeliveryStation? and $primaryDeliveryStation.exists then $primaryDeliveryStation.idcode else 'NONE') + ', range=' + (if $range? then $range.knownname else 'null') + ', rangeClass=' + (if $range? then $range.class else 'null') + ', stayAtHome=' + this.$stayAtHome + ', minbuy=' + $minbuy + ', maxbuy=' + $maxbuy + ', minsell=' + $minsell + ', maxsell=' + $maxsell + ', cargoBefore=' + this.$miner_prevCargoTotal + ', commander=' + (if this.ship.commander? and this.ship.commander.exists then this.ship.commander.idcode else 'NONE') + ', default=' + (if this.ship.defaultorder? then @this.ship.defaultorder.id else 'NONE')" chance="this.$debugchance"/>
 
       <!-- Run GT mining routine fork in time slices so GT maintenance/training can run between cycles -->
       <set_value name="$strictGatherSector" exact="if this.$stayAtHome and this.$homeSector? and this.$homeSector.exists then this.$homeSector else null"/>
@@ -985,7 +1008,7 @@
       <set_value name="$currentDockedStation" exact="if this.ship.dockedat? and this.ship.dockedat.exists and this.ship.dockedat.isclass.station then this.ship.dockedat else null"/>
       <set_value name="$confirmedStationDelivery" exact="0"/>
       <set_value name="$deliveryStation" exact="null"/>
-      <do_if value="$currentDockedStation? and this.$miner_prevStationCargoByStation? and this.$miner_prevStationCargoByStation.{$currentDockedStation}?">
+      <do_if value="$hasSelectedWare and $currentDockedStation? and this.$miner_prevStationCargoByStation? and this.$miner_prevStationCargoByStation.{$currentDockedStation}?">
         <set_value name="$stationBefore" exact="this.$miner_prevStationCargoByStation.{$currentDockedStation}"/>
         <set_value name="$stationAfter" exact="$currentDockedStation.cargo.{$selectedWare}.count"/>
         <set_value name="$stationDelta" exact="$stationAfter - $stationBefore"/>
@@ -994,7 +1017,7 @@
           <set_value name="$deliveryStation" exact="$currentDockedStation"/>
         </do_if>
       </do_if>
-      <do_elseif value="this.$miner_prevDockedStation? and this.$miner_prevDockedStation.exists and this.$miner_prevStationCargoByStation? and this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}?">
+      <do_elseif value="$hasSelectedWare and this.$miner_prevDockedStation? and this.$miner_prevDockedStation.exists and this.$miner_prevStationCargoByStation? and this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}?">
         <set_value name="$stationBefore" exact="this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}"/>
         <set_value name="$stationAfter" exact="this.$miner_prevDockedStation.cargo.{$selectedWare}.count"/>
         <set_value name="$stationDelta" exact="$stationAfter - $stationBefore"/>
@@ -1004,7 +1027,7 @@
         </do_if>
       </do_elseif>
       <set_value name="$deliveredAmount" exact="[$confirmedStationDelivery, $netCargoDelta].max"/>
-      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Slice complete ware=' + $selectedWare.name + ', cargoAfter=' + $cargoAfterDelivery + ', cargoDelta=' + $netCargoDelta + ', stationDelivery=' + $confirmedStationDelivery + ', delivered=' + $deliveredAmount + ', dockedAt=' + (if $currentDockedStation? and $currentDockedStation.exists then $currentDockedStation.idcode else 'NONE') + ', commander=' + (if this.ship.commander? and this.ship.commander.exists then this.ship.commander.idcode else 'NONE') + ', default=' + (if this.ship.defaultorder? then @this.ship.defaultorder.id else 'NONE')" chance="this.$debugchance"/>
+      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Slice complete ware=' + (if $hasSelectedWare then $selectedWare.name else 'null') + ', cargoAfter=' + $cargoAfterDelivery + ', cargoDelta=' + $netCargoDelta + ', stationDelivery=' + $confirmedStationDelivery + ', delivered=' + $deliveredAmount + ', dockedAt=' + (if $currentDockedStation? and $currentDockedStation.exists then $currentDockedStation.idcode else 'NONE') + ', commander=' + (if this.ship.commander? and this.ship.commander.exists then this.ship.commander.idcode else 'NONE') + ', default=' + (if this.ship.defaultorder? then @this.ship.defaultorder.id else 'NONE')" chance="this.$debugchance"/>
       <set_value name="$intentPhaseAfterRun" exact="'mining'"/>
       <set_value name="$hasIntentWareAfterRun" exact="this.$minerIntentWare? and this.$minerIntentWare != null"/>
       <do_if value="$hasIntentWareAfterRun and this.ship.cargo.{this.$minerIntentWare}.count gt 0">
@@ -1094,10 +1117,12 @@
       <set_value name="this.$minerOverflowCommanderBackup" exact="null"/>
       <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': on_abort restored commander assignment after overflow detach'" chance="this.$debugchance"/>
     </do_if>
-    <do_if value="this.$minerAssignedWare? and this.$minerAssignedStations? and this.$minerAssignedStations.count gt 0">
+    <do_if value="this.$minerAssignedWare? and this.$minerAssignedWare != null and this.$minerAssignedStations? and this.$minerAssignedStations.count gt 0">
       <do_all exact="this.$minerAssignedStations.count" counter="$asi">
         <set_value name="$assignedStation" exact="this.$minerAssignedStations.{$asi}"/>
-        <remove_value name="global.$GT_MinerStationAssignments.{$assignedStation}.{this.$minerAssignedWare}.{this.ship}"/>
+        <do_if value="$assignedStation? and $assignedStation != null and global.$GT_MinerStationAssignments? and global.$GT_MinerStationAssignments.{$assignedStation}? and global.$GT_MinerStationAssignments.{$assignedStation}.{this.$minerAssignedWare}?">
+          <remove_value name="global.$GT_MinerStationAssignments.{$assignedStation}.{this.$minerAssignedWare}.{this.ship}"/>
+        </do_if>
       </do_all>
     </do_if>
     <do_if value="this.$minerIntentWare? and this.$minerIntentWare != null and this.$minerIntentStations? and this.$minerIntentStations.count gt 0">
