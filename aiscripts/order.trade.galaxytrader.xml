@@ -2165,7 +2165,7 @@
         <!-- Set flag to indicate maintenance transition for on_abort handler -->
         <set_value name="this.$maintenance_transition" exact="true"/>
         
-        <create_order object="this.ship" id="'Repair'" immediate="false" priority="true">
+        <create_order object="this.ship" id="'Repair'" immediate="false">
             <param name="destination" value="$repairStation"/>
           <param name="hullpercent" value="100"/>
           <param name="repairall" value="true"/>
@@ -7442,7 +7442,7 @@
         <set_command_action commandaction="commandaction.calculating"/>
         
         <!-- Create repair order -->
-        <create_order object="this.ship" id="'Repair'" immediate="true" priority="true">
+        <create_order object="this.ship" id="'Repair'" immediate="true">
           <param name="destination" value="$repairStation"/>
           <param name="repairall" value="true"/>
         </create_order>
