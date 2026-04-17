@@ -255,7 +255,8 @@ function gtDiagnose.populateFrame(frame)
     local isClearance      = (sectionName == "Clearance")
     local isSearchSummary  = (sectionName == "Search Summary")
     local isReservations   = (sectionName == "Reservations and Fleet")
-    local isMultiCol       = (numCols >= 6) or isPairDetails or isClearance or isSearchSummary
+    local isMinerScan      = (sectionName == "Miner Resource Scan")
+    local isMultiCol       = (numCols >= 6) or isPairDetails or isClearance or isSearchSummary or isMinerScan
 
     if isMultiCol then
         -- ===== 6-COLUMN STRUCTURED LAYOUT =====
@@ -311,6 +312,18 @@ function gtDiagnose.populateFrame(frame)
                 { text = "Revenue", halign = "right" },
                 "Reason",
             })
+        elseif isMinerScan then
+            -- Miner Resource Scan (dedicated self-scan):
+            -- Status=6%, Ware=20%, Best Yield=10%, Reachable=10%, Sectors=10%, Notes=flexible
+            GT_UI.setColPercents(contentTable, { 6, 20, 10, 10, 10 })
+            GT_UI.addHeaderRow(contentTable, {
+                { text = "Status", halign = "center" },
+                "Ware (* = active)",
+                { text = "Best Yield", halign = "right" },
+                { text = "Reachable", halign = "center" },
+                { text = "Sectors", halign = "right" },
+                "Notes",
+            })
         else
             GT_UI.addHeaderRow(contentTable, {
                 { text = "Status", halign = "center" },
@@ -355,11 +368,17 @@ function gtDiagnose.populateFrame(frame)
                     -- Right-align numeric columns per section type
                     local detailAlign = "left"
                     local col4Align   = "left"
+                    local col5Align   = "right"
                     if isSearchSummary then
                         detailAlign = "right"
                         col4Align   = "right"
                     elseif isPairDetails then
                         col4Align = "right"
+                    elseif isMinerScan then
+                        -- Miner Resource Scan: Best Yield right, Reachable centered, Sectors right
+                        detailAlign = "right"
+                        col4Align   = "center"
+                        col5Align   = "right"
                     end
 
                     GT_UI.addDataRow(contentTable, {
@@ -367,7 +386,7 @@ function gtDiagnose.populateFrame(frame)
                         { text = check, fontsize = detailFontSize },
                         { text = detail, halign = detailAlign, fontsize = detailFontSize },
                         { text = col4, halign = col4Align, fontsize = detailFontSize },
-                        { text = col5, halign = "right", fontsize = detailFontSize },
+                        { text = col5, halign = col5Align, fontsize = detailFontSize },
                         { text = col6, fontsize = detailFontSize,
                           color = (status == "FAIL") and GT_UI.COLORS.textNegative or nil },
                     }, { bgColor = rowBg })
