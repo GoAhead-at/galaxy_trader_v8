@@ -630,8 +630,8 @@
           </do_all>
           
           <!-- Re-sort combined list by gate distance (equipment docks + wharfs + shipyards merged). -->
-          <!-- Keep unreachable stations in list; native sort places them after reachable stations. -->
-          <sort_list list="$potentialStations" sortbygatedistanceto="$ship"/>
+          <!-- v8 compat: standalone <sort_list> in v8 only supports sortbyvalue/sortdescending. The sortbygatedistanceto attribute is v9-only on this element. (It works on <find_station> via the sortresultwithlimit attributeGroup, which is why the find_station calls above keep that attribute unchanged.) Same ordering achieved here via the gatedistance.{$ship} script property. The find_station calls above already drop unreachable stations (sortbygatedistanceto on find_station auto-excludes objects with gatedistance == -1), so $potentialStations contains only reachable entries by this point. -->
+          <sort_list list="$potentialStations" sortbyvalue="loop.element.gatedistance.{$ship}"/>
           
           <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
             <debug_text text="'[GT-Maintenance] (' + $ship.idcode + ') Found ' + $potentialStations.count + ' potential equipment stations (equipment docks + wharfs + shipyards, sorted by distance)'" chance="100"/>

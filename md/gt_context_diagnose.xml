@@ -1484,8 +1484,8 @@
         <!-- 0 if stayAtHome), enumerate sectors via find_sector +    -->
         <!-- match_gate_distance, then for each minable ware in the   -->
         <!-- ship cargo basket query sector.resources.{ware}.exists   -->
-        <!-- and sector.yieldrating.{ware} (the same fields the miner -->
-        <!-- uses at order.trade.galaxyminer.xml ~717-722). Apply the -->
+        <!-- and sector.averagemaxyield.{ware} (v8-compatible; v9's   -->
+        <!-- per-ware yieldrating does not exist in v8). Apply the    -->
         <!-- same A4 safety pre-filter (hostile / hazardous /         -->
         <!-- contested / sector-blacklisted) so the diagnostic        -->
         <!-- mirrors the miner's reachability decision exactly.       -->
@@ -1730,7 +1730,11 @@
           </do_if>
 
           <!-- Step 4: per-ware reachability + best-yield scan across $rscKeptSectors.
-               Uses the exact same predicates the miner uses (sector.yieldrating + resources.exists). -->
+               v8 compat: sector.yieldrating.{ware} (0..15 rating) is v9-only. v8 exposes per-ware yield
+               amount via sector.averagemaxyield.{ware}.count (raw amount). The "best yield" column now
+               shows raw amount instead of a 0..15 rating, and the reachability gate degrades to a
+               positive-amount check, which combined with sector.resources.{ware}.exists matches the
+               miner's reachability decision in v8. -->
           <set_value name="$rscMinYield" exact="1"/>
           <set_value name="$rscWareRows" exact="[]"/>
           <set_value name="$rscReachableCount" exact="0"/>
@@ -1742,8 +1746,8 @@
             <do_all exact="$rscKeptSectors.count" counter="$rsj">
               <set_value name="$rscSecEval" exact="$rscKeptSectors.{$rsj}"/>
               <set_value name="$rscSecYield" exact="-1"/>
-              <do_if value="$rscSecEval? and $rscSecEval.exists and $rscSecEval.isclass.sector and $rscSecEval.yieldrating.{$rscWare}?">
-                <set_value name="$rscSecYield" exact="@$rscSecEval.yieldrating.{$rscWare}"/>
+              <do_if value="$rscSecEval? and $rscSecEval.exists and $rscSecEval.isclass.sector and $rscSecEval.averagemaxyield.{$rscWare}?">
+                <set_value name="$rscSecYield" exact="@$rscSecEval.averagemaxyield.{$rscWare}.count"/>
               </do_if>
               <do_if value="$rscSecYield ge $rscMinYield and $rscSecEval.resources.{$rscWare}.exists">
                 <set_value name="$rscWareSectorCount" exact="$rscWareSectorCount + 1"/>

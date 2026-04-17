@@ -2208,7 +2208,8 @@
         <!-- Set flag to indicate maintenance transition for on_abort handler -->
         <set_value name="this.$maintenance_transition" exact="true"/>
         
-        <create_order object="this.ship" id="'Repair'" immediate="false" priority="true">
+        <!-- v8 compat: priority attribute on create_order is v9-only; dropped for v8 schema. -->
+        <create_order object="this.ship" id="'Repair'" immediate="false">
             <param name="destination" value="$repairStation"/>
           <param name="hullpercent" value="100"/>
           <param name="repairall" value="true"/>

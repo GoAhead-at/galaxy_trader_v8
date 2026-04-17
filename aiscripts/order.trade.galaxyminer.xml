@@ -715,8 +715,9 @@
             <set_value name="$gatherSectorEval" exact="this.$minerScoreGatherSpaces.{$gsi}"/>
             <set_value name="$sectorYieldRating" exact="-1"/>
             <do_if value="$gatherSectorEval? and $gatherSectorEval.exists and $gatherSectorEval.isclass.sector">
-              <do_if value="$gatherSectorEval.yieldrating.{$wareEval}?">
-                <set_value name="$sectorYieldRating" exact="@$gatherSectorEval.yieldrating.{$wareEval}"/>
+              <!-- v8 compat: sector.yieldrating.{ware} is v9-only. v8 exposes per-ware yield amount via sector.averagemaxyield.{ware}.count (raw amount, not 0..15 rating). For the reachability gate we just need "any positive yield", which the .exists check below already guarantees, so the rating compare degrades gracefully. -->
+              <do_if value="$gatherSectorEval.averagemaxyield.{$wareEval}?">
+                <set_value name="$sectorYieldRating" exact="@$gatherSectorEval.averagemaxyield.{$wareEval}.count"/>
               </do_if>
               <do_if value="$sectorYieldRating ge this.$minReachableYieldRating">
                 <do_if value="$gatherSectorEval.resources.{$wareEval}.exists">
@@ -1171,7 +1172,7 @@
       </do_if>
       <!-- Diagnostic snapshot: lightweight payload for the in-game GT Diagnose UI.
            The diagnose tool runs its own dedicated resource scan (gt_context_diagnose.xml
-           SECTION 3b) using sector.resources.{ware} / sector.yieldrating.{ware} on the
+           SECTION 3b) using sector.resources.{ware} / sector.averagemaxyield.{ware} on the
            same gather-distance footprint, so we no longer ship the full per-ware scoring
            table here — only the runtime fields the UI needs to render coordination /
            policy / active-mining state. -->
