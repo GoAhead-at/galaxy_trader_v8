@@ -219,8 +219,8 @@
     <set_value name="this.$minSwitchCooldown" exact="[30s, [600s, $minSwitchCooldown].min].max"/>
     <set_value name="this.$minCargoCommitPercent" exact="[0, [100, $minCargoCommitPercent].min].max"/>
     <set_value name="this.$hardEmergencyDelta" exact="[20, [100, $hardEmergencyDelta].min].max"/>
-    <!-- Keep ware preselection aligned with mining routine expectations (minrating defaults to 3). -->
-    <set_value name="this.$minReachableYieldRating" exact="3"/>
+    <!-- Relaxed pre-filter (was 3): low-yield-but-actually-mineable wares are no longer silently dropped before scoring. Avoids low-pilot/single-sector miners stalling on "No mineable wares". -->
+    <set_value name="this.$minReachableYieldRating" exact="1"/>
     <do_if value="this.$hardEmergencyDelta lt this.$criticalDemandDelta">
       <set_value name="this.$hardEmergencyDelta" exact="this.$criticalDemandDelta"/>
     </do_if>
@@ -409,8 +409,13 @@
             <do_if value="this.$playerStationsOnly and $stationCandidate.owner != this.owner">
               <set_value name="$allowStation" exact="false"/>
             </do_if>
-            <do_if value="this.$homeSector? and this.$homeSector.exists and $stationCandidate.sector != this.$homeSector">
-              <set_value name="$allowStation" exact="false"/>
+            <!-- User-supplied stations outside homeSector are gated by maxSellDistance (gatedistance from homeSector or current sector), respecting the player's explicit picks instead of silently dropping them. -->
+            <do_if value="$stationCandidate.sector? and $stationCandidate.sector.exists">
+              <set_value name="$stationGateRefSector" exact="if this.$homeSector? and this.$homeSector.exists then this.$homeSector else this.sector"/>
+              <set_value name="$stationGateDistance" exact="@$stationGateRefSector.gatedistance.{$stationCandidate.sector}"/>
+              <do_if value="not $stationGateDistance? or $stationGateDistance lt 0 or $stationGateDistance gt this.$maxSellDistance">
+                <set_value name="$allowStation" exact="false"/>
+              </do_if>
             </do_if>
             <do_if value="$allowStation and not $targetStations.indexof.{$stationCandidate}">
               <append_to_list name="$targetStations" exact="$stationCandidate"/>
@@ -489,7 +494,8 @@
           <set_value name="$stationCargoList" exact="$stationCandidate.cargo.list"/>
           <do_all exact="$stationCargoList.count" counter="$sci">
             <set_value name="$candidateWare" exact="$stationCargoList.{$sci}"/>
-            <do_if value="$candidateWare? and ($candidateWare.waretransport == waretransport.solid or $candidateWare.waretransport == waretransport.liquid) and this.ship.cargo.{$candidateWare}.max gt 0 and (($restrictToShipBasket and $shipMineableBasket.indexof.{$candidateWare}) or (not $restrictToShipBasket)) and not $candidateWares.indexof.{$candidateWare}">
+            <!-- Require hastag.minable so non-mineable solids/liquids (food, hull parts, etc.) cannot enter the ware pool when the ship's warebasket is empty. -->
+            <do_if value="$candidateWare? and $candidateWare.hastag.minable and ($candidateWare.waretransport == waretransport.solid or $candidateWare.waretransport == waretransport.liquid) and this.ship.cargo.{$candidateWare}.max gt 0 and (($restrictToShipBasket and $shipMineableBasket.indexof.{$candidateWare}) or (not $restrictToShipBasket)) and not $candidateWares.indexof.{$candidateWare}">
               <append_to_list name="$candidateWares" exact="$candidateWare"/>
             </do_if>
           </do_all>
@@ -564,6 +570,35 @@
       <do_if value="this.ship.isplayerowned and (if this.$stayAtHome then 0 else this.$maxGatherDistance) le 0 and $wareReachabilityRefSector.isclass.sector and not $wareReachabilityGatherSpaces.indexof.{$wareReachabilityRefSector}">
         <append_to_list name="$wareReachabilityGatherSpaces" exact="$wareReachabilityRefSector"/>
       </do_if>
+      <!-- Pre-filter gather sectors for hostile-owner / hazardous (when takesregiondamage) / contested-by-attackers / sectoractivity blacklist. Mirrors the safety checks the mining routine itself runs, so wares whose only reachable sector is unsafe are no longer promoted to "reachable" (which would cause the miner to loop on them indefinitely). -->
+      <set_value name="$blacklistgroupMiner" exact="if (@this.assignedcontrolled.primarypurpose == purpose.fight) or (@this.assignedcontrolled.primarypurpose == purpose.auxiliary) then blacklistgroup.military else blacklistgroup.civilian"/>
+      <create_list name="$wareReachabilityGatherSpacesFiltered"/>
+      <do_all exact="$wareReachabilityGatherSpaces.count" counter="$gsfi">
+        <set_value name="$gatherSpaceCheck" exact="$wareReachabilityGatherSpaces.{$gsfi}"/>
+        <do_if value="not $gatherSpaceCheck? or not $gatherSpaceCheck.exists or not $gatherSpaceCheck.isclass.sector">
+          <continue/>
+        </do_if>
+        <set_value name="$gsHazardous" exact="$gatherSpaceCheck.hashazardousregion and not $gatherSpaceCheck.containsthewave and this.ship.takesregiondamage"/>
+        <set_value name="$gsHostile" exact="@this.hasrelation.enemy.{$gatherSpaceCheck.owner}"/>
+        <set_value name="$gsContested" exact="false"/>
+        <do_if value="$gatherSpaceCheck.iscontested">
+          <set_value name="$gsContestingFactions" exact="$gatherSpaceCheck.contestingfactions"/>
+          <do_if value="not $gsContestingFactions.indexof.{this.ship.owner}">
+            <do_for_each name="$gsCheckFaction" in="$gsContestingFactions">
+              <do_if value="$gsCheckFaction.mayattack.{this.ship}">
+                <set_value name="$gsContested" exact="true"/>
+                <break/>
+              </do_if>
+            </do_for_each>
+          </do_if>
+          <remove_value name="$gsContestingFactions"/>
+        </do_if>
+        <set_value name="$gsActivityBlacklisted" exact="this.ship.isplayerowned and this.ship.hasblacklist.{blacklisttype.sectoractivity}.{$blacklistgroupMiner} and @$gatherSpaceCheck.isblacklisted.{blacklisttype.sectoractivity}.{$blacklistgroupMiner}.{this.ship}"/>
+        <do_if value="not $gsHazardous and not $gsHostile and not $gsContested and not $gsActivityBlacklisted">
+          <append_to_list name="$wareReachabilityGatherSpacesFiltered" exact="$gatherSpaceCheck"/>
+        </do_if>
+      </do_all>
+      <set_value name="$wareReachabilityGatherSpaces" exact="$wareReachabilityGatherSpacesFiltered"/>
       <do_all exact="$candidateWares.count" counter="$wi">
         <set_value name="$wareEval" exact="$candidateWares.{$wi}"/>
         <do_if value="not $wareEval? or $wareEval == null">
@@ -650,14 +685,21 @@
       <do_if value="this.ship.pilot? and global.$GT_Pilots? and global.$GT_Pilots.{this.ship.pilot}? and global.$GT_Pilots.{this.ship.pilot}.$Level?">
         <set_value name="$pilotLevel" exact="global.$GT_Pilots.{this.ship.pilot}.$Level"/>
       </do_if>
-      <do_if value="$pilotLevel ge 9 and $bestWare? and $bestWare != null and $selectedWare? and $selectedWare != null and $bestWare != $selectedWare">
+      <do_if value="$bestWare? and $bestWare != null and $selectedWare? and $selectedWare != null and $bestWare != $selectedWare">
         <set_value name="$switchDelta" exact="$bestUrgency - $selectedUrgency"/>
         <set_value name="$cooldownReady" exact="(this.$lastWareSwitchAt == 0s) or ((player.age - this.$lastWareSwitchAt) ge this.$minSwitchCooldown)"/>
         <set_value name="$cargoCommitPercent" exact="0"/>
         <do_if value="this.ship.cargo.{$selectedWare}.max gt 0">
           <set_value name="$cargoCommitPercent" exact="(this.ship.cargo.{$selectedWare}.count * 100) / [this.ship.cargo.{$selectedWare}.max, 1].max"/>
         </do_if>
-        <set_value name="$canSwitchNow" exact="$switchDelta ge this.$criticalDemandDelta and $cooldownReady and (($cargoCommitPercent lt this.$minCargoCommitPercent) or ($switchDelta ge this.$hardEmergencyDelta))"/>
+        <!-- Pilots level 9+ get the full deterministic switch gate. Pilots below level 9 are otherwise locked to their first ware; allow a hard-emergency override (delta >= hardEmergencyDelta) so they can still respond to crisis-level demand changes. -->
+        <set_value name="$canSwitchNow" exact="false"/>
+        <do_if value="$pilotLevel ge 9">
+          <set_value name="$canSwitchNow" exact="$switchDelta ge this.$criticalDemandDelta and $cooldownReady and (($cargoCommitPercent lt this.$minCargoCommitPercent) or ($switchDelta ge this.$hardEmergencyDelta))"/>
+        </do_if>
+        <do_else>
+          <set_value name="$canSwitchNow" exact="$switchDelta ge this.$hardEmergencyDelta and $cooldownReady"/>
+        </do_else>
         <do_if value="$canSwitchNow">
           <set_value name="$selectedWare" exact="$bestWare"/>
           <set_value name="this.$lastWareSwitchAt" exact="player.age"/>
@@ -1065,8 +1107,14 @@
         <do_all exact="this.$minerIntentStations.count" counter="$isi">
           <set_value name="$intentStation" exact="this.$minerIntentStations.{$isi}"/>
           <do_if value="global.$GT_MinerIntents? and global.$GT_MinerIntents.{$intentStation}? and global.$GT_MinerIntents.{$intentStation}.{this.$minerIntentWare}? and global.$GT_MinerIntents.{$intentStation}.{this.$minerIntentWare}.{this.ship}?">
-            <set_value name="global.$GT_MinerIntents.{$intentStation}.{this.$minerIntentWare}.{this.ship}.$phase" exact="$intentPhaseAfterRun"/>
-            <set_value name="global.$GT_MinerIntents.{$intentStation}.{this.$minerIntentWare}.{this.ship}.$eta" exact="player.age + 15s"/>
+            <!-- Once phase is delivering, drop the intent so $projectedIncoming does not double-count cargo that already landed. Otherwise refresh ETA against the demand-recheck interval (was a perpetual +15s reset that inflated coordinated-miner counts). -->
+            <do_if value="$intentPhaseAfterRun == 'delivering'">
+              <remove_value name="global.$GT_MinerIntents.{$intentStation}.{this.$minerIntentWare}.{this.ship}"/>
+            </do_if>
+            <do_else>
+              <set_value name="global.$GT_MinerIntents.{$intentStation}.{this.$minerIntentWare}.{this.ship}.$phase" exact="$intentPhaseAfterRun"/>
+              <set_value name="global.$GT_MinerIntents.{$intentStation}.{this.$minerIntentWare}.{this.ship}.$eta" exact="player.age + this.$demandRecheckInterval"/>
+            </do_else>
           </do_if>
         </do_all>
       </do_if>
@@ -1189,6 +1237,43 @@
     </do_if>
     <do_if value="global.$GT_MinerDiag? and global.$GT_MinerDiag.{this.ship}?">
       <remove_value name="global.$GT_MinerDiag.{this.ship}"/>
+    </do_if>
+    <!-- Null all miner ship-blackboard scratch vars so an abort mid-cycle (e.g. assist restart, ship destruction) does not leak stale state into a re-init. Mirrors the V9 chunked-loop scratch cleanup adapted to V8's actual var set. -->
+    <do_if value="this.$minerAssignedStations?">
+      <set_value name="this.$minerAssignedStations" exact="[]"/>
+    </do_if>
+    <do_if value="this.$minerAssignedWare?">
+      <set_value name="this.$minerAssignedWare" exact="null"/>
+    </do_if>
+    <do_if value="this.$minerIntentStations?">
+      <set_value name="this.$minerIntentStations" exact="[]"/>
+    </do_if>
+    <do_if value="this.$minerIntentWare?">
+      <set_value name="this.$minerIntentWare" exact="null"/>
+    </do_if>
+    <do_if value="this.$minerOverflowCommanderBackup?">
+      <set_value name="this.$minerOverflowCommanderBackup" exact="null"/>
+    </do_if>
+    <do_if value="this.$minerDetachedForOverflow?">
+      <set_value name="this.$minerDetachedForOverflow" exact="false"/>
+    </do_if>
+    <do_if value="this.$activeMiningWare?">
+      <set_value name="this.$activeMiningWare" exact="null"/>
+    </do_if>
+    <do_if value="this.$activeMiningUrgency?">
+      <set_value name="this.$activeMiningUrgency" exact="0"/>
+    </do_if>
+    <do_if value="this.$miner_prevCargoTotal?">
+      <remove_value name="this.$miner_prevCargoTotal"/>
+    </do_if>
+    <do_if value="this.$miner_prevCargoByWare?">
+      <remove_value name="this.$miner_prevCargoByWare"/>
+    </do_if>
+    <do_if value="this.$miner_prevStationCargoByStation?">
+      <remove_value name="this.$miner_prevStationCargoByStation"/>
+    </do_if>
+    <do_if value="this.$miner_prevDockedStation?">
+      <remove_value name="this.$miner_prevDockedStation"/>
     </do_if>
   </on_abort>
 </aiscript>
