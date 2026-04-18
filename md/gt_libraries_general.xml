@@ -2765,13 +2765,21 @@
             <do_if value="@$commanderHome.exists">
               <set_value name="$homeBase" exact="$commanderHome"/>
             </do_if>
-            <!-- Galaxy Miner compatibility: explicit homeSector/homeStation params -->
-            <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.commander.defaultorder.$homeSector? and @$ship.commander.defaultorder.$homeSector.exists">
-              <set_value name="$homeBase" exact="$ship.commander.defaultorder.$homeSector"/>
-            </do_if>
-            <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.commander.defaultorder.$homeStation? and @$ship.commander.defaultorder.$homeStation.exists">
-              <set_value name="$homeBase" exact="$ship.commander.defaultorder.$homeStation"/>
-            </do_if>
+        <!-- Galaxy Miner compatibility: explicit homeSector/homeStation/homePosition params.
+             homePosition is type=position ([sector, position]); .{1} is the sector slot.
+             It is the canonical home anchor written by the Galaxy Miner's init for ships
+             that the user did not explicitly anchor (auto-anchored to current sector and
+             persisted via edit_order_param). homeSector is type=internal and not always
+             reliably MD-visible, so homePosition is preferred when both are present. -->
+        <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.commander.defaultorder.$homeStation? and @$ship.commander.defaultorder.$homeStation.exists">
+          <set_value name="$homeBase" exact="$ship.commander.defaultorder.$homeStation"/>
+        </do_if>
+        <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.commander.defaultorder.$homePosition? and $ship.commander.defaultorder.$homePosition.{1}? and @$ship.commander.defaultorder.$homePosition.{1}.exists and $ship.commander.defaultorder.$homePosition.{1}.isclass.sector">
+          <set_value name="$homeBase" exact="$ship.commander.defaultorder.$homePosition.{1}"/>
+        </do_if>
+        <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.commander.defaultorder.$homeSector? and @$ship.commander.defaultorder.$homeSector.exists">
+          <set_value name="$homeBase" exact="$ship.commander.defaultorder.$homeSector"/>
+        </do_if>
           </do_if>
         </do_if>
         
@@ -2780,12 +2788,17 @@
         <do_if value="not $homeBase? or not $homeBase.exists">
           <set_value name="$homeBase" exact="@$ship.defaultorder.$home"/>
         </do_if>
-        <!-- Galaxy Miner compatibility: explicit homeSector/homeStation params -->
-        <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.defaultorder? and $ship.defaultorder.$homeSector? and @$ship.defaultorder.$homeSector.exists">
-          <set_value name="$homeBase" exact="$ship.defaultorder.$homeSector"/>
-        </do_if>
+        <!-- Galaxy Miner compatibility: explicit homeSector/homeStation/homePosition params.
+             See subordinate-branch comment above for why homePosition is preferred over
+             homeSector when both are present. -->
         <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.defaultorder? and $ship.defaultorder.$homeStation? and @$ship.defaultorder.$homeStation.exists">
           <set_value name="$homeBase" exact="$ship.defaultorder.$homeStation"/>
+        </do_if>
+        <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.defaultorder? and $ship.defaultorder.$homePosition? and $ship.defaultorder.$homePosition.{1}? and @$ship.defaultorder.$homePosition.{1}.exists and $ship.defaultorder.$homePosition.{1}.isclass.sector">
+          <set_value name="$homeBase" exact="$ship.defaultorder.$homePosition.{1}"/>
+        </do_if>
+        <do_if value="(not $homeBase? or not $homeBase.exists) and $ship.defaultorder? and $ship.defaultorder.$homeSector? and @$ship.defaultorder.$homeSector.exists">
+          <set_value name="$homeBase" exact="$ship.defaultorder.$homeSector"/>
         </do_if>
         
         <!-- Fallback: Only if defaultorder.$home is not available, check GT_AIParameters -->

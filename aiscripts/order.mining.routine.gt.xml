@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<aiscript name="order.mining.routine.gt" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../stock_game/X4 Foundations/libraries/aiscripts.xsd" version="28">
+<aiscript name="order.mining.routine.gt" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../stock_game/X4 Foundations/libraries/aiscripts.xsd" version="29">
   <!--
   This script will try to automatically supply stations and will only work with
   a valid warebasket parameter (defined via jobs). It can do gas and mineral
@@ -55,6 +55,29 @@
 
       <param name="deepspace" default="false" type="bool" text="{1041, 10082}" advanced="true" comment="Operate in deep space. Operate only in deep space. Currently defined as 100 +/- 50km from sector core edge"/>
       <param name="resourcescout" default="false" type="bool" text="{1041, 10109}" advanced="true" comment="Scout for resources. Visibly look for resources before mining"/>
+      <!-- GT addition: Galaxy-Miner "auto-deploy resource probes" toggle. Distinct from $resourcescout
+           (which is a scout-only mode that bypasses MiningCollect entirely - see label='collect' branch
+           below). When this is true, the miner still mines normally; we only opportunistically launch a
+           resource probe in the mining sector after each MiningCollect slice (vanilla pattern from
+           order.move.recon.xml ~898-907 and ~1322-1346) so subsequent finds (own + fleet) benefit from
+           probe-driven yield ratings (lines ~990-1018). Internal because the player toggle lives on
+           order.trade.galaxyminer ($autoDeployResourceProbes). -->
+      <!-- patch sinceversion="29" backfills false on legacy saves where the param did not exist
+           in the routine signature; without this the AI-director frame import for the caller
+           (order.trade.galaxyminer) fails with "is not compatible with caller context" because the
+           saved <run_script> call frame has fewer params than the new routine declaration. -->
+      <param name="autodeployresourceprobes" default="false" type="internal" comment="If true, opportunistically deploy a resource probe in the mining sector after each MiningCollect slice (Galaxy Miner toggle).">
+        <patch value="false" sinceversion="29"/>
+      </param>
+      <!-- GT addition: Galaxy-Miner "max resource probes to buy" slider value. When > 0, the routine
+           top-ups probe stock to this number via the vanilla 'resupply' signal pipeline
+           (interrupt.restock.xml handles the actual buyoffer search and dock+buy sequence using the
+           override_deployablemacroamounts payload at param2.{4}). Player-side cap-clamping happens in
+           order.trade.galaxyminer.xml (against this.ship.ammostorage.deployable.capacity). patch
+           sinceversion="29" backfills 0 on legacy saves so the routine can read it as a number. -->
+      <param name="maxresourceprobestobuy" default="0" type="internal" comment="Target probe stock the miner maintains via auto-buy on resupply. 0 disables buying (Galaxy Miner slider).">
+        <patch value="0" sinceversion="29"/>
+      </param>
       <param name="duration" default="0s" type="time" infinitevalue="0s" advanced="true" text="{1041, 10034}" comment="Duration. Only accounts for time spent executing this order.">
         <input_param name="startvalue" value="0s"/>
         <input_param name="min" value="0s"/>
@@ -601,7 +624,12 @@
 
       <!-- command action -->
       <set_command_action commandaction="commandaction.searchingresources" />
-      <do_if value="this.assignedcontrolled.resourceprobescantime">
+      <!-- ship.resourceprobescantime is a v9 / scanner-equipped-ship property (built-in probe scan
+           on L/XL miners); ship_s and other miners without scanner capability do not expose it,
+           so a bare value=... read raises "Property lookup failed: this.assignedcontrolled.resourceprobescantime"
+           on every mining-slice entry. Guard with the standard ? existence check; absent property
+           means no scan delay applies. -->
+      <do_if value="this.assignedcontrolled.resourceprobescantime?">
         <wait exact="this.assignedcontrolled.resourceprobescantime" sinceversion="28"/>
       </do_if>
 
@@ -1052,6 +1080,21 @@
         <!-- Iterate over the wares in the basket -->
         <do_all exact="$miningbasket.count" counter="$w" >
           <set_value name="$ware" exact="$miningbasket.{$w}" />
+          <!-- GT addition: defensive null-skip. Vanilla baskets come from <jobs> definitions and
+               are always clean, but our caller (order.trade.galaxyminer.xml) passes a player-editable
+               $resourceBasket. A basket can contain null entries when (a) a corrupted AI-director
+               frame import left the saved basket with stale ware references that resolve to null
+               on load (see "is not compatible with caller context" in the X4 log), or (b) the
+               caller's chunked ware-scoring path materialized a null in $runWareBasket. Without
+               this guard the inner loop crashes on $gatheringspaces.{$i}.averagemaxyield.{null}
+               (line ~1088), $ware.illegalto.{...} (line ~1141), $gatheringspaces.{$i}.resources.{null}.exists
+               (line ~1163), and the FIND_FAIL debug_text (line ~1191) which uses `if $ware?` as
+               its existence test - X4's `?` returns true even when set_value materialized null,
+               so the conditional fall-through to .name still crashes. Skip the slot entirely. -->
+          <do_if value="not $ware? or $ware == null">
+            <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] basket slot ' + $w + '/' + $miningbasket.count + ' is null - skipping (caller passed a basket with stale/null entries)'" chance="$debugchance"/>
+            <continue/>
+          </do_if>
           <!-- Find Resouces: Iterate over the gathering spaces (vanilla: scale required rating by sector yield + skill, not raw yield amount thresholds). -->
           <do_all exact="$gatheringspaces.count" counter="$i">
             <!-- v8 compat: sector.yieldrating.{ware} (0..15) is v9-only; replaced with sector.averagemaxyield.{ware}.count (raw amount). $baserating now flows through find_closest_resource as minamount, on the same v8 amount-scale, which is what vanilla order.mining.routine.xml does. -->
@@ -1159,7 +1202,7 @@
             </do_else>
 
             <do_if value="not @$sector.exists and $debugchance">
-              <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] FIND_FAIL method=primary ware=' + (if $ware? then $ware.name else 'null') + ' gather#' + $i + ' space=' + $gatheringspaces.{$i}.knownname + ' class=' + $gatheringspaces.{$i}.class + ' baserating=' + $baserating + ' minrating=' + $minrating + ' hasContext=' + this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}} + ' resExists=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then $gatheringspaces.{$i}.resources.{$ware}.exists else 'n/a') + ' yieldR=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then @$gatheringspaces.{$i}.averagemaxyield.{$ware}.count else 'n/a')" chance="$debugchance"/>
+              <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] FIND_FAIL method=primary ware=' + (if $ware? and $ware != null then $ware.name else 'null') + ' gather#' + $i + ' space=' + $gatheringspaces.{$i}.knownname + ' class=' + $gatheringspaces.{$i}.class + ' baserating=' + $baserating + ' minrating=' + $minrating + ' hasContext=' + this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}} + ' resExists=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? and $ware != null then $gatheringspaces.{$i}.resources.{$ware}.exists else 'n/a') + ' yieldR=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? and $ware != null then @$gatheringspaces.{$i}.averagemaxyield.{$ware}.count else 'n/a')" chance="$debugchance"/>
             </do_if>
 
             <!-- Zone found -->
@@ -1259,7 +1302,7 @@
                 </find_closest_resource>
               </do_else>
               <do_if value="not @$sector.exists and $debugchance">
-                <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] FIND_FAIL method=old ware=' + (if $ware? then $ware.name else 'null') + ' gather#' + $i + ' space=' + $gatheringspaces.{$i}.knownname + ' class=' + $gatheringspaces.{$i}.class + ' minrating=' + $minrating + ' hasContext=' + this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}} + ' resExists=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then $gatheringspaces.{$i}.resources.{$ware}.exists else 'n/a') + ' yieldR=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? then @$gatheringspaces.{$i}.averagemaxyield.{$ware}.count else 'n/a')" chance="$debugchance"/>
+                <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] FIND_FAIL method=old ware=' + (if $ware? and $ware != null then $ware.name else 'null') + ' gather#' + $i + ' space=' + $gatheringspaces.{$i}.knownname + ' class=' + $gatheringspaces.{$i}.class + ' minrating=' + $minrating + ' hasContext=' + this.assignedcontrolled.hascontext.{$gatheringspaces.{$i}} + ' resExists=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? and $ware != null then $gatheringspaces.{$i}.resources.{$ware}.exists else 'n/a') + ' yieldR=' + (if $gatheringspaces.{$i}.isclass.sector and $ware? and $ware != null then @$gatheringspaces.{$i}.averagemaxyield.{$ware}.count else 'n/a')" chance="$debugchance"/>
               </do_if>
               <!-- Zone found -->
               <do_if value="$sector.exists">
@@ -1356,12 +1399,17 @@
           <set_value name="$gt_bl_seca" exact="this.assignedcontrolled.hasblacklist.{blacklisttype.sectoractivity}.{$blacklistgroup}"/>
           <set_value name="$gt_bl_trv" exact="this.assignedcontrolled.hasblacklist.{blacklisttype.sectortravel}.{$blacklistgroup}"/>
           <set_value name="$gt_bl_obj" exact="this.assignedcontrolled.hasblacklist.{blacklisttype.objectactivity}.{$blacklistgroup}"/>
-          <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] NO_SECTOR_FOR_WARE lastWare=' + (if $ware? then $ware.name else 'null') + ' miningbasket=' + $miningbasket + ' minrating=' + $minrating + ' gatherN=' + $gatheringspaces.count + ' sellN=' + $sellspaces.count + ' probesectorsN=' + $probesectors.count + ' minbuy=' + $minbuy + ' maxbuy=' + $maxbuy + ' minsell=' + $minsell + ' maxsell=' + $maxsell + ' deepspace=' + $deepspace + ' BLsectorActivity=' + $gt_bl_seca + ' BLsectorTravel=' + $gt_bl_trv + ' BLobjectActivity=' + $gt_bl_obj" chance="$debugchance"/>
+          <!-- $ware? is insufficient on its own: X4's existence operator returns true for variables
+               materialized as null (e.g. when the basket is [null] and every $w iteration was skipped
+               via continue, $ware retains its initial null materialization from set_value at line 1082).
+               Add `$ware != null` to all post-loop $ware reads so the diagnostic block does not crash
+               on a basket consisting entirely of null entries. -->
+          <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] NO_SECTOR_FOR_WARE lastWare=' + (if $ware? and $ware != null then $ware.name else 'null') + ' miningbasket=' + $miningbasket + ' minrating=' + $minrating + ' gatherN=' + $gatheringspaces.count + ' sellN=' + $sellspaces.count + ' probesectorsN=' + $probesectors.count + ' minbuy=' + $minbuy + ' maxbuy=' + $maxbuy + ' minsell=' + $minsell + ' maxsell=' + $maxsell + ' deepspace=' + $deepspace + ' BLsectorActivity=' + $gt_bl_seca + ' BLsectorTravel=' + $gt_bl_trv + ' BLobjectActivity=' + $gt_bl_obj" chance="$debugchance"/>
           <remove_value name="$gt_bl_seca"/>
           <remove_value name="$gt_bl_trv"/>
           <remove_value name="$gt_bl_obj"/>
           <do_all exact="$gatheringspaces.count" counter="$i">
-            <do_if value="$ware? and $gatheringspaces.{$i}.isclass.sector">
+            <do_if value="$ware? and $ware != null and $gatheringspaces.{$i}.isclass.sector">
               <debug_text text="'[GT-MiningRoutine][ship=' + this.assignedcontrolled.idcode + '] gather#' + $i + ' ' + $gatheringspaces.{$i}.knownname + ' resExists=' + $gatheringspaces.{$i}.resources.{$ware}.exists + ' yieldR=' + @$gatheringspaces.{$i}.averagemaxyield.{$ware}.count + ' minrating=' + $minrating" chance="$debugchance"/>
             </do_if>
             <do_else>
@@ -1464,6 +1512,111 @@
       </create_order>
       <!-- very short wait to allow the newly-created order to start and prevent the following logic from needlessly being processed. -->
       <wait exact="1ms" sinceversion="4"/>
+
+      <!-- GT: opportunistic resource-probe deployment for Galaxy-Miner ships with the
+           "Auto-deploy resource probes" toggle on. By the time control returns past the
+           immediate MiningCollect sub-order the ship has finished collecting in the
+           target asteroid field, so this is the natural moment to drop a probe — the
+           probe will sit on the field and feed the per-sector probe scan at lines
+           ~990-1018 (which lifts find_closest_resource yield ratings for this ship and
+           every other GT/vanilla miner that scans the sector afterwards).
+
+           Vanilla reference pattern: order.move.recon.xml lines 898-907 (drop probe at
+           current position when no operational probe within 64km) and 1336-1342
+           (launch_resourceprobe). We deliberately skip the resourcescout-only
+           order.move.recon recon loop because that bypasses MiningCollect entirely
+           (label="collect" path above) — Galaxy-Miner needs to mine, not just scout.
+
+           Resupply: when the ship is empty on resource probes we also fire a non-urgent
+           'resupply' signal (vanilla mining-routine pattern from line ~365-367). It is
+           non-urgent so it does NOT divert the miner from the upcoming sell pass; the
+           ResupplyHandler interrupt + GT restock will pick probes up the next time the
+           ship docks at home for selling, and a probe will be dropped on the next
+           mining slice. -->
+      <do_if value="$autodeployresourceprobes and this.assignedcontrolled.sector?">
+        <set_value name="$gtProbeCount" exact="this.assignedcontrolled.ammostorage.{deployablecategory.resourceprobe}.count"/>
+        <set_value name="$gtDeployableFree" exact="@this.assignedcontrolled.ammostorage.deployable.free"/>
+
+        <!-- 1) DEPLOY: drop a probe on the freshly-mined asteroid field if we have stock and no
+             operational probe of ours is already covering this radius. -->
+        <do_if value="$gtProbeCount gt 0">
+          <find_object name="$gtNearbyProbe" space="this.assignedcontrolled.sector" trueowner="this.assignedcontrolled.trueowner" deployablecategory="deployablecategory.resourceprobe">
+            <match_distance object="this.assignedcontrolled" max="64km"/>
+          </find_object>
+          <do_if value="not @$gtNearbyProbe.isoperational">
+            <set_value name="$gtProbeLegal" exact="true"/>
+            <do_if value="@this.assignedcontrolled.sector.policefaction and @this.assignedcontrolled.sector.resources.illegalto.{this.assignedcontrolled.sector.policefaction}">
+              <set_value name="$gtProbeLegal" exact="false"/>
+            </do_if>
+            <do_if value="$gtProbeLegal">
+              <launch_resourceprobe name="$gtProbeLaunched" object="this.assignedcontrolled"/>
+              <set_value name="$gtProbeCount" exact="this.assignedcontrolled.ammostorage.{deployablecategory.resourceprobe}.count"/>
+              <set_value name="$gtDeployableFree" exact="@this.assignedcontrolled.ammostorage.deployable.free"/>
+              <debug_text text="'[GT-Miner] ' + @this.assignedcontrolled.idcode + ': auto-deployed resource probe in ' + @this.assignedcontrolled.sector.knownname + ' (probes remaining: ' + $gtProbeCount + ')'" chance="$debugchance"/>
+              <remove_value name="$gtProbeLaunched"/>
+            </do_if>
+            <remove_value name="$gtProbeLegal"/>
+          </do_if>
+          <remove_value name="$gtNearbyProbe"/>
+        </do_if>
+
+        <!-- 2) RECOVER: scan the current sector for one of our own operational probes whose
+             field is now exhausted (no basket ware shows any average yield in this sector).
+             If found AND we have free deployable storage, push a CollectDeployables sub-order so
+             the ship picks up the probe between mining slices and can redeploy it elsewhere.
+             We act on at most ONE probe per slice to keep the routine responsive; remaining
+             stale probes will be picked up on subsequent visits. -->
+        <do_if value="$gtDeployableFree gt 0 and @$warebasket.count gt 0">
+          <set_value name="$gtSectorDepleted" exact="true"/>
+          <do_for_each name="$gtBasketWare" in="$warebasket">
+            <do_if value="@this.assignedcontrolled.sector.averagemaxyield.{$gtBasketWare}.count gt 0">
+              <set_value name="$gtSectorDepleted" exact="false"/>
+              <break/>
+            </do_if>
+          </do_for_each>
+          <do_if value="$gtSectorDepleted">
+            <!-- Vanilla pattern: find_object returns the closest match, then filter operational
+                 status on the returned object (see order.move.recon.xml ~898-902). We don't constrain
+                 with match_distance because the probe could be anywhere in the sector — the ship will
+                 navigate to it via the CollectDeployables order. -->
+            <find_object name="$gtStaleProbe" space="this.assignedcontrolled.sector" trueowner="this.assignedcontrolled.trueowner" deployablecategory="deployablecategory.resourceprobe"/>
+            <do_if value="@$gtStaleProbe.exists and @$gtStaleProbe.isoperational">
+              <debug_text text="'[GT-Miner] ' + @this.assignedcontrolled.idcode + ': scheduling pickup of stale probe in depleted sector ' + @this.assignedcontrolled.sector.knownname + ' (deployable.free=' + $gtDeployableFree + ')'" chance="$debugchance"/>
+              <create_order id="'CollectDeployables'" object="this.assignedcontrolled" immediate="true">
+                <param name="targetlist" value="[$gtStaleProbe]"/>
+                <param name="debugchance" value="$debugchance"/>
+              </create_order>
+              <wait exact="1ms"/>
+            </do_if>
+            <remove_value name="$gtStaleProbe"/>
+          </do_if>
+          <remove_value name="$gtSectorDepleted"/>
+        </do_if>
+
+        <!-- 3) BUY: only fired when the ship has run OUT of probes (count == 0). The slider
+             ($maxresourceprobestobuy, mirrored to GT_AIParameters.$MaxResourceProbesToBuy by the
+             miner order's init / main_loop) controls HOW MANY to restock per buy run, not how often.
+             Triggering on every "below slider target" delta would spam resupply after every single
+             deploy and yo-yo the ship between mining and restock docking - resupply is meant to
+             happen when the ship is empty (vanilla mining-routine pattern at order.mining.routine.xml
+             ~365-367 also fires only on `not ammostorage.{deployablecategory.resourceprobe}.count`).
+             Pipeline: signal 'GT_DoMaintenance' on player.galaxy -> gt_maintenance.xml DoMaintenance
+             reads $autoDeployResourceProbes + $maxResourceProbesToBuy from GT_AIParameters, picks
+             the closest equipment dock with stock, and queues add_build_to_modify_ship for the
+             slider amount (capped at deployable.capacity). This MD-side pipeline bypasses
+             interrupt.restock.xml's hard `loadout level le 0` guard (~280) which would otherwise
+             cancel ammo+unit resupply on stripped player ships, blocking the probe buy entirely.
+             Throttle: 5min between requests so we do not spam GT_Maintenance when no buyoffers are
+             reachable; gt_maintenance also tracks $GT_MaintenanceFailedResupply with its own
+             5-min cooldown so the two layers reinforce each other. -->
+        <do_if value="$gtProbeCount le 0 and (not this.$gtNextProbeResupplyAt? or player.age ge this.$gtNextProbeResupplyAt)">
+          <signal_objects object="player.galaxy" param="'GT_DoMaintenance'" param2="this.assignedcontrolled"/>
+          <debug_text text="'[GT-Miner] ' + @this.assignedcontrolled.idcode + ': out of resource probes - triggered GT_Maintenance for ' + $maxresourceprobestobuy + ' probes (slider target)'" chance="$debugchance"/>
+          <set_value name="this.$gtNextProbeResupplyAt" exact="player.age + 5min"/>
+        </do_if>
+        <remove_value name="$gtProbeCount"/>
+        <remove_value name="$gtDeployableFree"/>
+      </do_if>
 
       <label name="sellwares" />
 

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<aiscript name="order.trade.galaxyminer" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../stock_game/X4 Foundations/libraries/aiscripts.xsd" version="1">
+<aiscript name="order.trade.galaxyminer" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../stock_game/X4 Foundations/libraries/aiscripts.xsd" version="2">
   <order id="GalaxyMiner" name="{77000, 31002}" description="{77000, 31102}" category="mining" infinite="true" allowinloop="false" canplayercancel="true">
     <params>
       <param name="homeStation" type="object" default="null" text="{77000, 31010}" comment="{77000, 31110}">
@@ -28,16 +28,44 @@
       <param name="assignToStation" default="true" type="bool" text="{77000, 31016}" comment="{77000, 31116}"/>
       <param name="playerStationsOnly" default="false" type="bool" text="{77000, 31028}" comment="{77000, 31128}"/>
       <param name="stayAtHome" default="false" type="bool" text="{77000, 31017}" comment="{77000, 31117}" />
-      <param name="autoDeployResourceProbes" default="false" type="bool" text="{77000, 31018}" comment="{77000, 31118}" />
+      <!-- patch sinceversion="2" backfills false on legacy saves where the param did not exist;
+           without this the AI-director frame import fails (see "is not compatible with caller context"
+           error in the X4 log) and the script restarts mid-cycle with corrupted locals. -->
+      <param name="autoDeployResourceProbes" default="false" type="bool" text="{77000, 31018}" comment="{77000, 31118}">
+        <patch value="false" sinceversion="2"/>
+      </param>
+      <!-- Slider: target stock of resource probes the miner should maintain via auto-buy on resupply.
+           Max is hard-capped at the ship's shared deployable capacity (resource probes share the
+           deployable storage pool with satellites/mines/nav-beacons). When 0, no probe buying is
+           triggered (miner uses whatever probes were manually loaded). The runtime clamp on init
+           re-applies this cap in case the player enters a higher value via direct save edits or
+           the cap changes due to ship reconfiguration. patch sinceversion="2" backfills 0 on
+           legacy saves so this.$maxResourceProbesToBuy can always be initialized from a valid
+           order param (init does NOT run on save load - only on order creation). -->
+      <param name="maxResourceProbesToBuy" default="0" type="number" text="{77000, 31029}" comment="{77000, 31129}">
+        <input_param name="min" value="0"/>
+        <input_param name="max" value="[this.ship.ammostorage.deployable.capacity, 0].max"/>
+        <input_param name="step" value="1"/>
+        <patch value="0" sinceversion="2"/>
+      </param>
+      <!-- default and input_param min are both 0 because 0 is a SEMANTICALLY VALID value meaning
+           "mine/sell in current (or home, if stayAtHome) sector only" - the downstream reachability
+           gate (~755) and scout-sector distance check (~970) both special-case `le 0` for this
+           "stay-local" behavior. UI startvalue=1 is a typical-case nudge (most fresh miners want
+           at least 1 jump), but the slider can be dragged down to 0 explicitly. The previous
+           min="1" was inconsistent with the actual semantics: it clamped the slider's display to
+           ≥1 even though the engine stored and used 0 unmodified, causing the diagnostic tool to
+           correctly report "Gather Range: 0" while the order panel UI claimed minimum 1. -->
       <param name="maxGatherDistance" default="0" type="number" text="{77000, 31019}" comment="{77000, 31119}">
         <input_param name="startvalue" value="1"/>
-        <input_param name="min" value="1"/>
+        <input_param name="min" value="0"/>
         <input_param name="max" value="[if (global.$GT_GlobalSettings? and global.$GT_GlobalSettings.$XP? and global.$GT_GlobalSettings.$XP.$UseVanillaXPOnly? and global.$GT_GlobalSettings.$XP.$UseVanillaXPOnly) then 25 else (if (this.ship.pilot? and global.$GT_Pilots? and global.$GT_Pilots.{this.ship.pilot}? and global.$GT_Pilots.{this.ship.pilot}.$Level?) then (if global.$GT_Pilots.{this.ship.pilot}.$Level le 2 then 1 else if global.$GT_Pilots.{this.ship.pilot}.$Level le 5 then 3 else if global.$GT_Pilots.{this.ship.pilot}.$Level le 8 then 5 else if global.$GT_Pilots.{this.ship.pilot}.$Level le 11 then 10 else if global.$GT_Pilots.{this.ship.pilot}.$Level le 13 then 15 else 25) else 1), 1].max"/>
         <input_param name="step" value="1"/>
       </param>
+      <!-- 0 valid — same rationale as maxGatherDistance above (0 means "sell in home sector only"). -->
       <param name="maxSellDistance" default="0" type="number" text="{77000, 31020}" comment="{77000, 31120}">
         <input_param name="startvalue" value="1"/>
-        <input_param name="min" value="1"/>
+        <input_param name="min" value="0"/>
         <input_param name="max" value="[if (global.$GT_GlobalSettings? and global.$GT_GlobalSettings.$XP? and global.$GT_GlobalSettings.$XP.$UseVanillaXPOnly? and global.$GT_GlobalSettings.$XP.$UseVanillaXPOnly) then 25 else (if (this.ship.pilot? and global.$GT_Pilots? and global.$GT_Pilots.{this.ship.pilot}? and global.$GT_Pilots.{this.ship.pilot}.$Level?) then (if global.$GT_Pilots.{this.ship.pilot}.$Level le 2 then 1 else if global.$GT_Pilots.{this.ship.pilot}.$Level le 5 then 3 else if global.$GT_Pilots.{this.ship.pilot}.$Level le 8 then 5 else if global.$GT_Pilots.{this.ship.pilot}.$Level le 11 then 10 else if global.$GT_Pilots.{this.ship.pilot}.$Level le 13 then 15 else 25) else 1), 1].max"/>
         <input_param name="step" value="1"/>
       </param>
@@ -120,7 +148,12 @@
     <do_if value="not $homePositionValid and $homeSector? and $homeSector.exists">
       <set_value name="$homePosition" exact="[$homeSector, $homeSector.coreposition]"/>
       <set_value name="$homePositionValid" exact="true"/>
-      <do_if value="this.ship.order? and this.ship.order.exists">
+      <!-- Only write GalaxyMiner-specific params to this.ship.order if that topmost order IS a
+           GalaxyMiner order. For subordinates that received a temporary "Assist" order from their
+           commander, this.ship.order is the Assist order (no homePosition param) and an unguarded
+           edit_order_param raises "Order Assist has no parameter 'homePosition'". The defaultorder
+           write below is the persistent storage anyway. -->
+      <do_if value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
         <edit_order_param order="this.ship.order" param="'homePosition'" value="$homePosition"/>
       </do_if>
       <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
@@ -136,7 +169,8 @@
     <do_if value="not $assignToStation and $homeStation? and $homeStation.exists">
       <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': assignToStation disabled -> clearing homeStation ' + $homeStation.idcode" chance="$debugchance"/>
       <set_value name="$homeStation" exact="null"/>
-      <do_if value="this.ship.order? and this.ship.order.exists">
+      <!-- Same Assist/GalaxyMiner topmost-order gate as above. -->
+      <do_if value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
         <edit_order_param order="this.ship.order" param="'homeStation'" value="null"/>
       </do_if>
       <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
@@ -151,7 +185,8 @@
       <set_value name="$homeSector" exact="this.sector"/>
       <set_value name="$homePosition" exact="[$homeSector, $homeSector.coreposition]"/>
       <set_value name="$homePositionValid" exact="true"/>
-      <do_if value="this.ship.order? and this.ship.order.exists">
+      <!-- Same Assist/GalaxyMiner topmost-order gate as above. -->
+      <do_if value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
         <edit_order_param order="this.ship.order" param="'homePosition'" value="$homePosition"/>
         <edit_order_param order="this.ship.order" param="'homeSector'" value="$homeSector"/>
       </do_if>
@@ -188,6 +223,11 @@
     <set_value name="this.$playerStationsOnly" exact="$playerStationsOnly"/>
     <set_value name="this.$stayAtHome" exact="$stayAtHome"/>
     <set_value name="this.$autoDeployResourceProbes" exact="$autoDeployResourceProbes"/>
+    <!-- Hard-clamp the buy slider against the ship's actual deployable capacity. If the ship has
+         no deployable storage at all (legacy/edge case), the slider effectively becomes 0. -->
+    <set_value name="$maxResourceProbeBuyCap" exact="[0, @this.ship.ammostorage.deployable.capacity].max"/>
+    <set_value name="this.$maxResourceProbesToBuy" exact="[0, [$maxResourceProbeBuyCap, $maxResourceProbesToBuy].min].max"/>
+    <remove_value name="$maxResourceProbeBuyCap"/>
     <set_value name="$pilotLevelForParamCap" exact="1"/>
     <do_if value="this.ship.pilot? and global.$GT_Pilots? and global.$GT_Pilots.{this.ship.pilot}? and global.$GT_Pilots.{this.ship.pilot}.$Level?">
       <set_value name="$pilotLevelForParamCap" exact="global.$GT_Pilots.{this.ship.pilot}.$Level"/>
@@ -211,8 +251,10 @@
     <do_else>
       <set_value name="$pilotMaxParamDistance" exact="25"/>
     </do_else>
-    <set_value name="this.$maxGatherDistance" exact="[$maxGatherDistance, $pilotMaxParamDistance].min"/>
-    <set_value name="this.$maxSellDistance" exact="[$maxSellDistance, $pilotMaxParamDistance].min"/>
+    <!-- Clamp ≥0 (0 is a semantically valid "stay-local" value, see param def). Pilot cap still
+         applies as an upper bound. -->
+    <set_value name="this.$maxGatherDistance" exact="[0, [$maxGatherDistance, $pilotMaxParamDistance].min].max"/>
+    <set_value name="this.$maxSellDistance" exact="[0, [$maxSellDistance, $pilotMaxParamDistance].min].max"/>
     <set_value name="this.$fleetBalancing" exact="$fleetBalancing"/>
     <set_value name="this.$demandRecheckInterval" exact="[10s, [300s, $demandRecheckInterval].min].max"/>
     <set_value name="this.$criticalDemandDelta" exact="[5, [50, $criticalDemandDelta].min].max"/>
@@ -255,6 +297,8 @@
       $MaxDistance = if $stayAtHome then 0 else $maxGatherDistance,
       $AutoDeployResourceProbes = $autoDeployResourceProbes,
       $autoDeployResourceProbes = $autoDeployResourceProbes,
+      $MaxResourceProbesToBuy = this.$maxResourceProbesToBuy,
+      $maxResourceProbesToBuy = this.$maxResourceProbesToBuy,
       $RequestTime = player.age
     ]"/>
     <do_if value="not global.$GT_MinerStationAssignments?">
@@ -315,7 +359,9 @@
           <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': assignToStation runtime-off -> clearing homeStation ' + $homeStation.idcode" chance="this.$debugchance"/>
           <set_value name="$homeStation" exact="null"/>
           <set_value name="this.$homeStation" exact="null"/>
-          <do_if value="this.ship.order? and this.ship.order.exists">
+          <!-- Same Assist/GalaxyMiner topmost-order gate as in init: do not write into a foreign
+               topmost order (e.g. Assist) that lacks the homeStation param. -->
+          <do_if value="this.ship.order? and this.ship.order.exists and @this.ship.order.id == 'GalaxyMiner'">
             <edit_order_param order="this.ship.order" param="'homeStation'" value="null"/>
           </do_if>
           <do_if value="this.ship.defaultorder? and this.ship.defaultorder.exists and this.ship.defaultorder.id == 'GalaxyMiner'">
@@ -332,6 +378,11 @@
       <set_value name="global.$GT_AIParameters.{this.ship}.$MaxDistance" exact="if this.$stayAtHome then 0 else this.$maxGatherDistance"/>
       <set_value name="global.$GT_AIParameters.{this.ship}.$AutoDeployResourceProbes" exact="this.$autoDeployResourceProbes"/>
       <set_value name="global.$GT_AIParameters.{this.ship}.$autoDeployResourceProbes" exact="this.$autoDeployResourceProbes"/>
+      <!-- Re-clamp the slider every cycle in case the player edited it via the order panel.
+           Using @ on the capacity guards against rare edge-cases where ammostorage is transiently null. -->
+      <set_value name="this.$maxResourceProbesToBuy" exact="[0, [[0, @this.ship.ammostorage.deployable.capacity].max, $maxResourceProbesToBuy].min].max"/>
+      <set_value name="global.$GT_AIParameters.{this.ship}.$MaxResourceProbesToBuy" exact="this.$maxResourceProbesToBuy"/>
+      <set_value name="global.$GT_AIParameters.{this.ship}.$maxResourceProbesToBuy" exact="this.$maxResourceProbesToBuy"/>
 
       <!-- Never return from default order on invalid home config; stay idle and retry -->
       <do_if value="not this.$homeConfigValid">
@@ -360,6 +411,115 @@
       <!-- Shared GT maintenance -->
       <signal_objects object="player.galaxy" param="'GT_DoMaintenance'" param2="this.ship"/>
       <wait exact="2s"/>
+
+      <!-- =========================================================================
+           RESUPPLY EXECUTOR: turn the shopping list gt_maintenance.xml prepared into
+           an actual wharf build. gt_maintenance.xml's DoMaintenance / ExecuteMaintenance
+           cues only build $ammotable + $unittable and stash them in
+           global.$GT_ResupplyOrders.{$ship} - they do NOT call add_build_to_modify_ship
+           themselves. The trader scripts (order.trade.galaxytrader.xml ~2052-2205,
+           order.trade.galaxytradermk4.xml ~2237-2310) host the executor for trader
+           ships; without an equivalent block here the miner's resource-probe restock
+           sat in $GT_ResupplyOrders forever and the ship never undocked. Mirrors the
+           trader pattern: docking-bay verify -> add_build_to_modify_ship -> wait up
+           to 900s for GT_Maintenance_Complete (signaled by gt_maintenance.xml's
+           ProcessResupplyComplete after order.build.equip.xml's completion patch
+           queues GT_ResupplyComplete on wharf finish).
+           ========================================================================= -->
+      <do_if value="global.$GT_ResupplyOrders? and global.$GT_ResupplyOrders.{this.ship}?">
+        <set_value name="$resupplyData" exact="global.$GT_ResupplyOrders.{this.ship}"/>
+        <set_value name="$ammoTableKeys" exact="@$resupplyData.$AmmoTable.keys"/>
+        <set_value name="$ammoTableCount" exact="@$ammoTableKeys.count"/>
+        <set_value name="$unitTableKeys" exact="@$resupplyData.$UnitTable.keys"/>
+        <set_value name="$unitTableCount" exact="@$unitTableKeys.count"/>
+        <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+          <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Found pending resupply order at ' + @$resupplyData.$Station.knownname + ' (Ammo types=' + $ammoTableCount + ', Unit types=' + $unitTableCount + ') - executing add_build_to_modify_ship'" chance="100"/>
+        </do_if>
+
+        <do_if value="$ammoTableCount? or $unitTableCount?">
+          <set_value name="$resupplyStation" exact="$resupplyData.$Station"/>
+          <set_value name="$canDockResupply" exact="false"/>
+          <do_if value="@$resupplyStation.exists">
+            <find_dockingbay name="$testResupplyDock" object="$resupplyStation" checkoperational="true" multiple="false">
+              <match_dock size="this.ship.docksize" storage="false"/>
+            </find_dockingbay>
+            <do_if value="$testResupplyDock">
+              <set_value name="$canDockResupply" exact="true"/>
+            </do_if>
+          </do_if>
+
+          <do_if value="$canDockResupply">
+            <set_value name="$buildSuccessful" exact="false"/>
+            <add_build_to_modify_ship
+                object="$resupplyStation"
+                buildobject="this.ship"
+                ammo="$resupplyData.$AmmoTable"
+                units="$resupplyData.$UnitTable"
+                immediate="false"
+                internal="true"
+                result="$buildSuccessful"/>
+
+            <do_if value="$buildSuccessful">
+              <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': add_build_to_modify_ship OK at ' + $resupplyStation.knownname + ' - waiting up to 900s for GT_Maintenance_Complete'" chance="100"/>
+              </do_if>
+
+              <wait max="900s">
+                <interrupt>
+                  <conditions>
+                    <event_object_signalled object="this.ship" param="'GT_Maintenance_Complete'"/>
+                  </conditions>
+                  <actions>
+                    <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': GT_Maintenance_Complete received, resuming mining'" chance="100"/>
+                    </do_if>
+                  </actions>
+                </interrupt>
+              </wait>
+
+              <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': resupply wait ended (completion or 900s timeout) - continuing main_loop'" chance="100"/>
+              </do_if>
+            </do_if>
+            <do_else>
+              <!-- Build call rejected (station cannot fulfill the order, e.g. no probe stock).
+                   Drop the tracking so DoMaintenance can retry on the next cycle, and apply a
+                   5-min cooldown on the AI side so we do not hammer the same dead station. -->
+              <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': add_build_to_modify_ship FAILED at ' + $resupplyStation.knownname + ' - clearing tracking + 5min cooldown'" chance="100"/>
+              <remove_value name="global.$GT_ResupplyOrders.{this.ship}"/>
+              <do_if value="global.$GT_MaintenanceOrders? and global.$GT_MaintenanceOrders.{this.ship}?">
+                <remove_value name="global.$GT_MaintenanceOrders.{this.ship}"/>
+              </do_if>
+              <do_if value="not global.$GT_MaintenanceFailedResupply?">
+                <set_value name="global.$GT_MaintenanceFailedResupply" exact="table[]"/>
+              </do_if>
+              <set_value name="global.$GT_MaintenanceFailedResupply.{this.ship}" exact="player.age + 300s"/>
+              <set_value name="this.$gtNextProbeResupplyAt" exact="player.age + 5min"/>
+            </do_else>
+          </do_if>
+          <do_else>
+            <!-- Resupply station is no longer reachable for this ship's dock size. Drop the
+                 tracking so the next cycle picks a different station. -->
+            <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+              <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': resupply station ' + @$resupplyStation.knownname + ' has no compatible dock (ship size=' + this.ship.docksize + ') - clearing tracking'" chance="100"/>
+            </do_if>
+            <remove_value name="global.$GT_ResupplyOrders.{this.ship}"/>
+            <do_if value="global.$GT_MaintenanceOrders? and global.$GT_MaintenanceOrders.{this.ship}?">
+              <remove_value name="global.$GT_MaintenanceOrders.{this.ship}"/>
+            </do_if>
+          </do_else>
+        </do_if>
+        <do_else>
+          <!-- Empty shopping list - nothing to buy, just clean up. -->
+          <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+            <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': empty resupply shopping list - clearing tracking'" chance="100"/>
+          </do_if>
+          <remove_value name="global.$GT_ResupplyOrders.{this.ship}"/>
+          <do_if value="global.$GT_MaintenanceOrders? and global.$GT_MaintenanceOrders.{this.ship}?">
+            <remove_value name="global.$GT_MaintenanceOrders.{this.ship}"/>
+          </do_if>
+        </do_else>
+      </do_if>
 
       <!-- Resolve home anchor -->
       <set_value name="$range" exact="null"/>
@@ -512,12 +672,40 @@
             <set_value name="$tsi" exact="this.$minerCandidateScanIndex + $chunkOffset - 1"/>
             <set_value name="$stationCandidate" exact="this.$minerCandidateScanDemandStations.{$tsi}"/>
             <set_value name="$stationCargoList" exact="$stationCandidate.cargo.list"/>
+            <!-- Per-station cargo dump.
+                 Lists every ware in the station's cargo storage definition, regardless of current count
+                 or filter outcome, so we can verify whether wares like Ore are even visible to the
+                 candidate-ware fallback. station.cargo.list returns wares the station has storage
+                 declared for - if Ore is not in this dump for a station that should consume Ore, the
+                 station's storage is the issue, not our filter. -->
+            <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_STATION station=' + $stationCandidate.idcode + ' cargo.count=' + $stationCargoList.count" chance="this.$debugchance"/>
             <do_all exact="$stationCargoList.count" counter="$sci">
               <set_value name="$candidateWare" exact="$stationCargoList.{$sci}"/>
               <!-- A1: require hastag.minable so non-mineable solids/liquids (food, hull parts, ...) cannot enter the ware pool when shipMineableBasket is empty. -->
+              <set_value name="$candFilterMinable" exact="if $candidateWare? and $candidateWare.hastag.minable then 1 else 0"/>
+              <set_value name="$candFilterTransport" exact="if $candidateWare? and ($candidateWare.waretransport == waretransport.solid or $candidateWare.waretransport == waretransport.liquid) then 1 else 0"/>
+              <set_value name="$candFilterShipCargo" exact="if $candidateWare? and this.ship.cargo.{$candidateWare}.max gt 0 then 1 else 0"/>
+              <set_value name="$candFilterBasket" exact="if $candidateWare? and (($restrictToShipBasket and $shipMineableBasket.indexof.{$candidateWare}) or (not $restrictToShipBasket)) then 1 else 0"/>
+              <set_value name="$candFilterTarget" exact="if $candidateWare? and $stationCandidate.cargo.{$candidateWare}.target gt 0 then 1 else 0"/>
+              <set_value name="$candFilterDup" exact="if $candidateWare? and not $candidateWares.indexof.{$candidateWare} then 1 else 0"/>
               <do_if value="$candidateWare? and $candidateWare.hastag.minable and ($candidateWare.waretransport == waretransport.solid or $candidateWare.waretransport == waretransport.liquid) and this.ship.cargo.{$candidateWare}.max gt 0 and (($restrictToShipBasket and $shipMineableBasket.indexof.{$candidateWare}) or (not $restrictToShipBasket)) and not $candidateWares.indexof.{$candidateWare}">
                 <append_to_list name="$candidateWares" exact="$candidateWare"/>
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_ACCEPT station=' + $stationCandidate.idcode + ' ware=' + $candidateWare.name + ' target=' + $stationCandidate.cargo.{$candidateWare}.target + ' current=' + $stationCandidate.cargo.{$candidateWare}.count" chance="this.$debugchance"/>
               </do_if>
+              <do_else>
+                <!-- Per-ware rejection trace.
+                     Each filter is logged as 0/1 so the FIRST 0 in the row tells you why the ware was
+                     rejected. wareTransport=0 means waretransport is neither solid nor liquid (e.g. it
+                     is a container ware), shipCargo=0 means this ship hull cannot store the ware (wrong
+                     miner type), basket=0 means it is not in the ship's UI ware-basket while basket-mode
+                     is restrictive, dup=0 means it was already added by a previous station. notice
+                     target=0 is reported but is NOT used as a filter at this stage - it is just
+                     diagnostic; even if target=0 here, the per-(ware, station) loop later will still
+                     skip the station (target=0 -> no contribution), so the ware can still survive if
+                     another station has target>0. -->
+                <set_value name="$candWareName" exact="if $candidateWare? then $candidateWare.name else 'NULL'"/>
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_REJECT station=' + $stationCandidate.idcode + ' ware=' + $candWareName + ' minable=' + $candFilterMinable + ' wareTransport=' + $candFilterTransport + ' shipCargo=' + $candFilterShipCargo + ' basket=' + $candFilterBasket + ' dup=' + $candFilterDup + ' target=' + $candFilterTarget" chance="this.$debugchance"/>
+              </do_else>
             </do_all>
           </do_all>
           <set_value name="this.$minerCandidateScanIndex" exact="$chunkEnd + 1"/>
@@ -529,12 +717,39 @@
         <remove_value name="this.$minerCandidateScanIndex"/>
       </do_else>
 
-      <!-- Fallback: some stations expose demand only via buy offers, not cargo.list. -->
-      <do_if value="$candidateWares.count == 0 and $demandStations.count gt 0">
-        <do_if value="not global.$GT_FallbackActivations?">
-          <set_value name="global.$GT_FallbackActivations" exact="table[]"/>
-        </do_if>
-        <set_value name="global.$GT_FallbackActivations.{'Miner.BuyOfferCandidateFallback'}" exact="if global.$GT_FallbackActivations.{'Miner.BuyOfferCandidateFallback'}? then global.$GT_FallbackActivations.{'Miner.BuyOfferCandidateFallback'} + 1 else 1"/>
+      <!-- Buy-offer merge pass.
+           Previously this block was a "last resort" fallback gated on $candidateWares.count == 0,
+           but station.cargo.list and station.find_buy_offer return DIFFERENT sets of wares: a
+           refinery that consumes Ore + Silicon may show only Silicon in cargo.list (because that's
+           what is currently stocked) while find_buy_offer returns active buy offers for BOTH Ore
+           and Silicon. With the old gate, Silicon "won" the cargo.list pass, candidateWares.count
+           became 1, the buy-offer pass never fired, and Ore was permanently invisible to ware
+           selection - which is exactly how both miners ended up locked onto Silicon while Ore
+           demand at the same station was completely empty.
+           The fix is to ALWAYS run the buy-offer pass and merge its findings into the candidate
+           list. The dedup check ($candidateWares.indexof) prevents wares already added by cargo.list
+           from being added twice. The fallback-activation counter keeps the same name (it is now a
+           merge counter rather than a fallback counter, but renaming would lose save-game telemetry
+           continuity). -->
+      <do_if value="$demandStations.count gt 0">
+        <!-- NOTE: previously this block bumped global.$GT_FallbackActivations.{'Miner.BuyOfferCandidateFallback'}
+             with the same read-through-and-add pattern that MD scripts use successfully (see
+             gt_order_monitor_bridge.xml line 61 and gt_xp_training.xml lines 1952 / 1989 / 1999).
+             In AI script contexts, however, X4 evaluates the LHS path of
+             set_value name="global.$X.{'key'}" against a value-snapshot of $X rather than the
+             real storage location, so the engine raises
+             "Failed to set table[].{'Miner.BuyOfferCandidateFallback'} to value 1" the first
+             time it tries to write a sub-key. The same pattern at the overflow-sell branch
+             (line ~1403, 'Miner.OverflowSellFallback') has the same latent bug but was masked
+             because that branch only ran when all primary stations were full. Once the
+             buy-offer pass started running every slice (this fix), the crash became regular
+             and aborted the miner mid-cycle, which in turn cleared its intent and triggered
+             the ware-relock bug we were originally diagnosing.
+             The counter is pure telemetry (no behavior reads it back), so we drop the AI-script
+             increment here. The debug_text below already records each activation, and the MD
+             counters (XP, OrderMonitor) continue to use the global table normally because MD
+             handles global table writes correctly. -->
+        <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_BUYOFFER_PASS scanning ' + $demandStations.count + ' stations for buy offers (cargo.list pass added ' + $candidateWares.count + ' so far)'" chance="this.$debugchance"/>
         <set_value name="this.$minerBuyOfferScanDemandStations" exact="$demandStations"/>
         <set_value name="this.$minerBuyOfferScanIndex" exact="1"/>
         <do_while value="this.$minerBuyOfferScanIndex? and this.$minerBuyOfferScanDemandStations? and this.$minerBuyOfferScanIndex le this.$minerBuyOfferScanDemandStations.count">
@@ -543,12 +758,22 @@
             <set_value name="$tsi" exact="this.$minerBuyOfferScanIndex + $chunkOffset - 1"/>
             <set_value name="$stationCandidate" exact="this.$minerBuyOfferScanDemandStations.{$tsi}"/>
             <find_buy_offer buyer="$stationCandidate" tradepartner="this.ship" result="$stationBuyOffers" multiple="true"/>
+            <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_BUYOFFER_STATION station=' + $stationCandidate.idcode + ' offers=' + $stationBuyOffers.count" chance="this.$debugchance"/>
             <do_all exact="$stationBuyOffers.count" counter="$boi">
               <set_value name="$buyOffer" exact="$stationBuyOffers.{$boi}"/>
               <set_value name="$candidateWare" exact="$buyOffer.ware"/>
               <do_if value="$candidateWare? and $candidateWare.hastag.minable and this.ship.cargo.{$candidateWare}.max gt 0 and (($restrictToShipBasket and $shipMineableBasket.indexof.{$candidateWare}) or (not $restrictToShipBasket)) and not $candidateWares.indexof.{$candidateWare}">
                 <append_to_list name="$candidateWares" exact="$candidateWare"/>
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_BUYOFFER_ACCEPT station=' + $stationCandidate.idcode + ' ware=' + $candidateWare.name" chance="this.$debugchance"/>
               </do_if>
+              <do_else>
+                <set_value name="$candWareName" exact="if $candidateWare? then $candidateWare.name else 'NULL'"/>
+                <set_value name="$candFilterMinable" exact="if $candidateWare? and $candidateWare.hastag.minable then 1 else 0"/>
+                <set_value name="$candFilterShipCargo" exact="if $candidateWare? and this.ship.cargo.{$candidateWare}.max gt 0 then 1 else 0"/>
+                <set_value name="$candFilterBasket" exact="if $candidateWare? and (($restrictToShipBasket and $shipMineableBasket.indexof.{$candidateWare}) or (not $restrictToShipBasket)) then 1 else 0"/>
+                <set_value name="$candFilterDup" exact="if $candidateWare? and not $candidateWares.indexof.{$candidateWare} then 1 else 0"/>
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_BUYOFFER_REJECT station=' + $stationCandidate.idcode + ' ware=' + $candWareName + ' minable=' + $candFilterMinable + ' shipCargo=' + $candFilterShipCargo + ' basket=' + $candFilterBasket + ' dup=' + $candFilterDup" chance="this.$debugchance"/>
+              </do_else>
             </do_all>
           </do_all>
           <set_value name="this.$minerBuyOfferScanIndex" exact="$chunkEnd + 1"/>
@@ -571,6 +796,39 @@
       </do_all>
       <set_value name="$candidateWares" exact="$normalizedCandidateWares"/>
 
+      <!-- Final candidate-list summary.
+           Two debug emissions: a single CAND_FINAL line listing the number and concatenated names of
+           wares that will be scored, followed by one CAND_TARGETS line per (ware, station) combination
+           that shows the station's target/current for that ware. The second block is the cross-check
+           the user asked for: if Ore is missing from CAND_FINAL we know candidate discovery failed; if
+           Ore is in CAND_FINAL but no station has target>0 for it, the per-(ware, station) loop will
+           skip every contribution and Ore's urgency will be 0 - which would explain Silicon winning
+           even though the user says Ore is empty. -->
+      <do_if value="this.$debugchance gt 0">
+        <set_value name="$candFinalNames" exact="''"/>
+        <do_all exact="$candidateWares.count" counter="$cfi">
+          <set_value name="$cfWare" exact="$candidateWares.{$cfi}"/>
+          <do_if value="$cfWare?">
+            <set_value name="$candFinalNames" exact="$candFinalNames + (if $candFinalNames == '' then '' else ', ') + $cfWare.name"/>
+          </do_if>
+        </do_all>
+        <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_FINAL count=' + $candidateWares.count + ' wares=[' + $candFinalNames + ']'" chance="this.$debugchance"/>
+        <do_all exact="$candidateWares.count" counter="$ctwi">
+          <set_value name="$ctWare" exact="$candidateWares.{$ctwi}"/>
+          <do_if value="$ctWare?">
+            <do_all exact="$demandStations.count" counter="$ctsi">
+              <set_value name="$ctStation" exact="$demandStations.{$ctsi}"/>
+              <do_if value="$ctStation? and $ctStation.exists">
+                <set_value name="$ctTarget" exact="$ctStation.cargo.{$ctWare}.target"/>
+                <set_value name="$ctCurrent" exact="$ctStation.cargo.{$ctWare}.count"/>
+                <set_value name="$ctMax" exact="$ctStation.cargo.{$ctWare}.max"/>
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': CAND_TARGETS ware=' + $ctWare.name + ' station=' + $ctStation.idcode + ' target=' + $ctTarget + ' current=' + $ctCurrent + ' max=' + $ctMax" chance="this.$debugchance"/>
+              </do_if>
+            </do_all>
+          </do_if>
+        </do_all>
+      </do_if>
+
       <do_if value="$candidateWares.count == 0">
         <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': No mineable wares. demandStationCount=' + $demandStations.count + ', resourceBasketCount=' + (if this.$resourceBasket? then this.$resourceBasket.count else 0) + ', shipMineableCount=' + (if $shipMineableBasket? then $shipMineableBasket.count else 0) + ', restrictToShipBasket=' + $restrictToShipBasket" chance="this.$debugchance"/>
         <show_notification text="'Galaxy-Miner: no mineable wares available for ' + this.ship.knownname" timeout="8s"/>
@@ -579,7 +837,7 @@
       </do_if>
 
       <!-- Clear previous cycle assignment/intent records for this ship -->
-      <do_if value="this.$minerAssignedWare? and this.$minerAssignedStations? and this.$minerAssignedStations.count gt 0">
+      <do_if value="this.$minerAssignedWare? and this.$minerAssignedWare != null and this.$minerAssignedStations? and this.$minerAssignedStations.count gt 0">
         <set_value name="this.$minerCleanupAssignedIndex" exact="1"/>
         <do_while value="this.$minerCleanupAssignedIndex? and this.$minerAssignedStations? and this.$minerCleanupAssignedIndex le this.$minerAssignedStations.count">
           <set_value name="$chunkEnd" exact="[this.$minerCleanupAssignedIndex + 12, this.$minerAssignedStations.count].min"/>
@@ -713,18 +971,45 @@
           <set_value name="$wareIsReachable" exact="false"/>
           <do_all exact="this.$minerScoreGatherSpaces.count" counter="$gsi">
             <set_value name="$gatherSectorEval" exact="this.$minerScoreGatherSpaces.{$gsi}"/>
-            <set_value name="$sectorYieldRating" exact="-1"/>
-            <do_if value="$gatherSectorEval? and $gatherSectorEval.exists and $gatherSectorEval.isclass.sector">
-              <!-- v8 compat: sector.yieldrating.{ware} is v9-only. v8 exposes per-ware yield amount via sector.averagemaxyield.{ware}.count (raw amount, not 0..15 rating). For the reachability gate we just need "any positive yield", which the .exists check below already guarantees, so the rating compare degrades gracefully. -->
-              <do_if value="$gatherSectorEval.averagemaxyield.{$wareEval}?">
-                <set_value name="$sectorYieldRating" exact="@$gatherSectorEval.averagemaxyield.{$wareEval}.count"/>
-              </do_if>
-              <do_if value="$sectorYieldRating ge this.$minReachableYieldRating">
-                <do_if value="$gatherSectorEval.resources.{$wareEval}.exists">
+            <!-- Reachability gate.
+                 Stage 1 (cheap): sector.resources.{ware}.exists - canonical "ware can be mined here"
+                 check, matches vanilla order.mining.routine.xml line ~1164. averagemaxyield.{ware}.count
+                 is intentionally NOT a gate (it is 0/absent for sparse fields, undiscovered sectors,
+                 unsurveyed clusters; vanilla treats it as a scoring signal only at lines 999-1006).
+                 Stage 2 (player-only): probe with find_closest_resource useundiscovered="false" so the
+                 reachability decision matches what order.mining.routine.gt.xml will actually find at
+                 execution time. Without this, a sector whose .resources entry lists ore (e.g. Holy
+                 Vision via game-data) but whose ore asteroids the player has never surveyed would be
+                 promoted as reachable, score the highest urgency (multiple ore refineries), and the
+                 mining slice would then loop on FAIL_NO_RESOURCE forever - even when other minable
+                 wares with discovered asteroids in the same sector (e.g. ice) are demand-eligible.
+                 NPCs use useundiscovered=true at execution time, so the .exists gate alone matches
+                 their actual find behavior. -->
+            <do_if value="$gatherSectorEval? and $gatherSectorEval.exists and $gatherSectorEval.isclass.sector and $gatherSectorEval.resources.{$wareEval}.exists">
+              <do_if value="this.ship.isplayerowned">
+                <find_closest_resource sector="$wareReachProbeSector" position="$wareReachProbePos" wares="$wareReachProbeSecWares" ware="$wareEval" refobject="$gatherSectorEval" minamount="1" useundiscovered="false">
+                  <refposition value="$gatherSectorEval.coreposition" object="$gatherSectorEval" max="$gatherSectorEval.coresize / 4m"/>
+                </find_closest_resource>
+                <do_if value="@$wareReachProbeSector.exists">
                   <set_value name="$wareIsReachable" exact="true"/>
+                </do_if>
+                <do_if value="$wareReachProbeSector?">
+                  <remove_value name="$wareReachProbeSector"/>
+                </do_if>
+                <do_if value="$wareReachProbePos?">
+                  <remove_value name="$wareReachProbePos"/>
+                </do_if>
+                <do_if value="$wareReachProbeSecWares?">
+                  <remove_value name="$wareReachProbeSecWares"/>
+                </do_if>
+                <do_if value="$wareIsReachable">
                   <break/>
                 </do_if>
               </do_if>
+              <do_else>
+                <set_value name="$wareIsReachable" exact="true"/>
+                <break/>
+              </do_else>
             </do_if>
           </do_all>
           <do_if value="$wareEval?">
@@ -755,7 +1040,47 @@
                     </do_elseif>
                     <do_if value="$intent? and $intent.$intentAmount? and $intent.$intentAmount gt 0 and $intent.$eta? and $intent.$eta le $intentHorizon and $intent.$phase? and ($intent.$phase == 'mining' or $intent.$phase == 'hauling' or $intent.$phase == 'delivering') and $intentShip? and $intentShip.exists and $intentShip.isoperational and $intentShipIsMinerControlled">
                       <set_value name="$projectedIncoming" exact="$projectedIncoming + $intent.$intentAmount"/>
+                      <!-- Intent accepted: contributes to projectedIncoming for this (station, ware). -->
+                      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': INTENT_OK ware=' + $wareEval.name + ' station=' + $stationEval.idcode + ' fromShip=' + $intentShip.idcode + ' amount=' + $intent.$intentAmount + ' phase=' + $intent.$phase + ' eta=' + $intent.$eta + ' horizon=' + $intentHorizon" chance="this.$debugchance"/>
                     </do_if>
+                    <do_else>
+                      <!-- Intent rejected: emit one diagnostic line per failing predicate so we can see WHY a foreign intent
+                           was not counted. Each line names exactly one rejection reason; the conditions are evaluated in
+                           the same order as the accept gate so the first failing one is reported. -->
+                      <set_value name="$intentRejectReason" exact="'unknown'"/>
+                      <do_if value="not ($intent? and $intent.$intentAmount?)">
+                        <set_value name="$intentRejectReason" exact="'no_amount_field'"/>
+                      </do_if>
+                      <do_elseif value="$intent.$intentAmount le 0">
+                        <set_value name="$intentRejectReason" exact="'zero_amount'"/>
+                      </do_elseif>
+                      <do_elseif value="not $intent.$eta?">
+                        <set_value name="$intentRejectReason" exact="'no_eta_field'"/>
+                      </do_elseif>
+                      <do_elseif value="$intent.$eta gt $intentHorizon">
+                        <set_value name="$intentRejectReason" exact="'eta_past_horizon'"/>
+                      </do_elseif>
+                      <do_elseif value="not $intent.$phase?">
+                        <set_value name="$intentRejectReason" exact="'no_phase_field'"/>
+                      </do_elseif>
+                      <do_elseif value="not ($intent.$phase == 'mining' or $intent.$phase == 'hauling' or $intent.$phase == 'delivering')">
+                        <set_value name="$intentRejectReason" exact="'phase_unknown'"/>
+                      </do_elseif>
+                      <do_elseif value="not ($intentShip? and $intentShip.exists)">
+                        <set_value name="$intentRejectReason" exact="'ship_gone'"/>
+                      </do_elseif>
+                      <do_elseif value="not $intentShip.isoperational">
+                        <set_value name="$intentRejectReason" exact="'ship_not_operational'"/>
+                      </do_elseif>
+                      <do_elseif value="not $intentShipIsMinerControlled">
+                        <set_value name="$intentRejectReason" exact="'not_miner_controlled'"/>
+                      </do_elseif>
+                      <set_value name="$intentRejectAmt" exact="if $intent? and $intent.$intentAmount? then $intent.$intentAmount else 0"/>
+                      <set_value name="$intentRejectEta" exact="if $intent? and $intent.$eta? then $intent.$eta else -1"/>
+                      <set_value name="$intentRejectPhase" exact="if $intent? and $intent.$phase? then $intent.$phase else 'NONE'"/>
+                      <set_value name="$intentRejectShipCode" exact="if $intentShip? and $intentShip.exists then $intentShip.idcode else 'GONE'"/>
+                      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': INTENT_REJECT ware=' + $wareEval.name + ' station=' + $stationEval.idcode + ' fromShip=' + $intentRejectShipCode + ' reason=' + $intentRejectReason + ' amount=' + $intentRejectAmt + ' phase=' + $intentRejectPhase + ' eta=' + $intentRejectEta + ' horizon=' + $intentHorizon" chance="this.$debugchance"/>
+                    </do_else>
                   </do_all>
                 </do_if>
                 <!-- Count vanilla real trade reservations and merge with GT intents without double counting overlap. -->
@@ -763,11 +1088,19 @@
                 <set_value name="$effectiveIncoming" exact="[$projectedIncoming, $reservedIncoming].max"/>
                 <set_value name="$projectedStock" exact="$currentAmount + $effectiveIncoming"/>
                 <set_value name="$deficitAmount" exact="[0, $targetAmount - $projectedStock].max"/>
-                <set_value name="$urgency" exact="$urgency + (($deficitAmount * 100) / [$targetAmount, 1].max)"/>
+                <set_value name="$urgencyContribution" exact="($deficitAmount * 100) / [$targetAmount, 1].max"/>
+                <set_value name="$urgency" exact="$urgency + $urgencyContribution"/>
                 <set_value name="$storagePercent" exact="($projectedStock * 100) / [$targetAmount, 1].max"/>
                 <do_if value="$storagePercent lt this.$overflowThreshold">
                   <set_value name="$hasPrimaryCapacity" exact="true"/>
                 </do_if>
+                <!-- Per-(ware, station) scoring trace.
+                     One line per station that actually has target>0 for this ware (i.e. one line per
+                     station that contributed to the urgency sum). Shows the exact inputs to the
+                     formula at line 944 so a verdict line later in the cycle can be cross-checked
+                     against its components. Inactive stations (target=0 for this ware) are skipped
+                     to keep the log readable. -->
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': STATION_SCORE ware=' + $wareEval.name + ' station=' + $stationEval.idcode + ' target=' + $targetAmount + ' current=' + $currentAmount + ' gtIntent=' + $projectedIncoming + ' vanillaReserved=' + $reservedIncoming + ' effIncoming=' + $effectiveIncoming + ' deficit=' + $deficitAmount + ' contrib=' + $urgencyContribution + ' fillPct=' + $storagePercent + ' wareUrgencyRunning=' + $urgency" chance="this.$debugchance"/>
               </do_if>
             </do_all>
           </do_if>
@@ -802,58 +1135,274 @@
       <remove_value name="this.$minerScoreBestUrgency"/>
       <remove_value name="this.$minerScoreBestWares"/>
       <remove_value name="this.$minerScoreIndex"/>
+      <!-- Per-ware scoring dump.
+           Emits one debug_text line per candidate ware: name, total urgency, reachability flag,
+           has-primary-capacity flag, this miner's currently-registered intent total across all
+           demand stations (sums GT_MinerIntents.{station}.{ware}.{this.ship}.$intentAmount), and
+           the deficit/incoming/target totals across all demand stations so we can see WHY one
+           ware out-scored another. Intentionally a separate emission per ware (instead of one big
+           concatenated string) so the line stays readable at any candidate count. Only fires when
+           debug logging is enabled (this.$debugchance). -->
+      <do_if value="this.$debugchance gt 0 and $candidateWares.count gt 0">
+        <do_all exact="$candidateWares.count" counter="$dwsi">
+          <set_value name="$dwsWare" exact="$candidateWares.{$dwsi}"/>
+          <do_if value="$dwsWare?">
+            <set_value name="$dwsUrgency" exact="if $wareUrgency.{$dwsWare}? then $wareUrgency.{$dwsWare} else 0"/>
+            <set_value name="$dwsReachable" exact="if $wareReachable.{$dwsWare}? and $wareReachable.{$dwsWare} then 1 else 0"/>
+            <set_value name="$dwsHasCap" exact="if $wareHasPrimaryCapacity.{$dwsWare}? and $wareHasPrimaryCapacity.{$dwsWare} then 1 else 0"/>
+            <set_value name="$dwsOwnIntent" exact="0"/>
+            <set_value name="$dwsTotalDeficit" exact="0"/>
+            <set_value name="$dwsTotalIncoming" exact="0"/>
+            <set_value name="$dwsTotalTarget" exact="0"/>
+            <set_value name="$dwsTotalCurrent" exact="0"/>
+            <do_all exact="$demandStations.count" counter="$dwsj">
+              <set_value name="$dwsStation" exact="$demandStations.{$dwsj}"/>
+              <do_if value="$dwsStation? and $dwsStation.exists">
+                <set_value name="$dwsTarget" exact="$dwsStation.cargo.{$dwsWare}.target"/>
+                <do_if value="$dwsTarget gt 0">
+                  <set_value name="$dwsCurrent" exact="$dwsStation.cargo.{$dwsWare}.count"/>
+                  <set_value name="$dwsReserved" exact="0"/>
+                  <get_ware_reservation object="$dwsStation" ware="$dwsWare" type="sell" result="$dwsReserved"/>
+                  <set_value name="$dwsDeficit" exact="[0, $dwsTarget - $dwsCurrent - $dwsReserved].max"/>
+                  <set_value name="$dwsTotalTarget" exact="$dwsTotalTarget + $dwsTarget"/>
+                  <set_value name="$dwsTotalCurrent" exact="$dwsTotalCurrent + $dwsCurrent"/>
+                  <set_value name="$dwsTotalDeficit" exact="$dwsTotalDeficit + $dwsDeficit"/>
+                  <set_value name="$dwsTotalIncoming" exact="$dwsTotalIncoming + $dwsReserved"/>
+                </do_if>
+                <do_if value="global.$GT_MinerIntents? and global.$GT_MinerIntents.{$dwsStation}? and global.$GT_MinerIntents.{$dwsStation}.{$dwsWare}? and global.$GT_MinerIntents.{$dwsStation}.{$dwsWare}.{this.ship}? and global.$GT_MinerIntents.{$dwsStation}.{$dwsWare}.{this.ship}.$intentAmount?">
+                  <set_value name="$dwsOwnIntent" exact="$dwsOwnIntent + global.$GT_MinerIntents.{$dwsStation}.{$dwsWare}.{this.ship}.$intentAmount"/>
+                </do_if>
+              </do_if>
+            </do_all>
+            <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': WARE_SCORE ware=' + $dwsWare.name + ' urgency=' + $dwsUrgency + ' reachable=' + $dwsReachable + ' primaryCap=' + $dwsHasCap + ' totals(target=' + $dwsTotalTarget + ', current=' + $dwsTotalCurrent + ', deficit=' + $dwsTotalDeficit + ', vanillaReserved=' + $dwsTotalIncoming + ') ownIntent=' + $dwsOwnIntent + ' stations=' + $demandStations.count" chance="this.$debugchance"/>
+          </do_if>
+        </do_all>
+      </do_if>
       <do_if value="$bestWares.count gt 0">
         <set_value name="$bestWare" exact="$bestWares.random"/>
       </do_if>
 
-      <!-- Choose active ware with deterministic switch gating -->
-      <set_value name="$selectedWare" exact="this.$activeMiningWare"/>
-      <do_if value="not $selectedWare? or not $candidateWares.indexof.{$selectedWare} or ($selectedWare? and $wareReachable.{$selectedWare}? and not $wareReachable.{$selectedWare})">
-        <set_value name="$selectedWare" exact="$bestWare"/>
-      </do_if>
-      <set_value name="$selectedUrgency" exact="0"/>
-      <do_if value="$selectedWare? and $wareUrgency.{$selectedWare}?">
-        <set_value name="$selectedUrgency" exact="$wareUrgency.{$selectedWare}"/>
-      </do_if>
-      <set_value name="$pilotLevel" exact="1"/>
-      <do_if value="this.ship.pilot? and global.$GT_Pilots? and global.$GT_Pilots.{this.ship.pilot}? and global.$GT_Pilots.{this.ship.pilot}.$Level?">
-        <set_value name="$pilotLevel" exact="global.$GT_Pilots.{this.ship.pilot}.$Level"/>
-      </do_if>
-      <!-- C1: previously gated by $pilotLevel ge 9. Pilots below level 9 are now allowed to switch as well,
-           but only on a hard-emergency delta (and respecting the switch cooldown). High-level pilots keep the
-           regular two-tier behavior (critical delta + cargo-commit gate, or hard-emergency overrides cargo). -->
-      <do_if value="$bestWare? and $selectedWare? and $bestWare != $selectedWare">
-        <set_value name="$switchDelta" exact="$bestUrgency - $selectedUrgency"/>
-        <set_value name="$cooldownReady" exact="(this.$lastWareSwitchAt == 0s) or ((player.age - this.$lastWareSwitchAt) ge this.$minSwitchCooldown)"/>
-        <set_value name="$cargoCommitPercent" exact="0"/>
-        <do_if value="this.ship.cargo.{$selectedWare}.max gt 0">
-          <set_value name="$cargoCommitPercent" exact="(this.ship.cargo.{$selectedWare}.count * 100) / [this.ship.cargo.{$selectedWare}.max, 1].max"/>
-        </do_if>
-        <set_value name="$canSwitchNow" exact="false"/>
-        <do_if value="$pilotLevel ge 9">
-          <set_value name="$canSwitchNow" exact="$switchDelta ge this.$criticalDemandDelta and $cooldownReady and (($cargoCommitPercent lt this.$minCargoCommitPercent) or ($switchDelta ge this.$hardEmergencyDelta))"/>
-        </do_if>
-        <do_else>
-          <set_value name="$canSwitchNow" exact="$switchDelta ge this.$hardEmergencyDelta and $cooldownReady"/>
-        </do_else>
-        <do_if value="$canSwitchNow">
-          <set_value name="$selectedWare" exact="$bestWare"/>
-          <set_value name="this.$lastWareSwitchAt" exact="player.age"/>
-        </do_if>
-      </do_if>
+      <!-- Ware selection: always pick the highest-urgency reachable ware ($bestWare).
+           The previous design carried this.$activeMiningWare across cycles and gated switches
+           behind criticalDemandDelta / hardEmergencyDelta / minSwitchCooldown / minCargoCommitPercent
+           and a pilot-level branch. That stickiness was confusing in-game: once a ware won an early
+           cycle (often by a small lead from one extra refinery in range, or from .random tie-break),
+           the miner would never reconsider until the lead grew >= criticalDemandDelta AND cooldown
+           elapsed AND cargo commitment dropped - so wares like silicon would appear to be "always"
+           chosen even after another ware became more urgent. Removing the sticky read collapses
+           ware selection to a single source of truth: whatever scored highest THIS slice. Per-slice
+           granularity is preserved by run_script (one full mine -> deliver round trip per slice),
+           so we still don't churn wares mid-cargo. The order params criticalDemandDelta /
+           hardEmergencyDelta / minSwitchCooldown / minCargoCommitPercent are kept declared (save-game
+           compat with patches) but no longer read; this.$lastWareSwitchAt and the $pilotLevel local
+           that only fed the switch gate are likewise removed. this.$activeMiningWare keeps being
+           written downstream (line ~1219, ~1293) for diagnostic snapshots / overflow telemetry, but
+           is never read back for selection. -->
+      <set_value name="$selectedWare" exact="$bestWare"/>
 
-      <do_if value="not $selectedWare?">
-        <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': No selected ware after demand scoring. bestWare=' + (if $bestWare? then $bestWare.name else 'NONE') + ', bestUrgency=' + $bestUrgency + ', activeWare=' + (if this.$activeMiningWare? then this.$activeMiningWare.name else 'NONE')" chance="this.$debugchance"/>
-        <wait exact="this.$demandRecheckInterval"/>
+      <!-- Hardening: $selectedWare? is true even when set_value stored null (X4 set_value always materializes the variable).
+           When scoring produces no reachable wares $bestWare stays null, line 812 then sets $selectedWare = null,
+           and downstream lookups like $wareUrgency.{$selectedWare} or $stationEval.cargo.{$selectedWare}.target crash on .{null}.
+           Force the early-return whenever the selected ware is missing OR null, and clear the stale active ware so
+           the next cycle does not re-pick the same null fallback. -->
+      <do_if value="not $selectedWare? or $selectedWare == null">
+        <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': No selected ware after demand scoring. bestWare=' + (if $bestWare? and $bestWare != null then $bestWare.name else 'NONE') + ', bestUrgency=' + $bestUrgency + ', activeWare=' + (if this.$activeMiningWare? and this.$activeMiningWare != null then this.$activeMiningWare.name else 'NONE')" chance="this.$debugchance"/>
+        <set_value name="this.$activeMiningWare" exact="null"/>
+        <set_value name="this.$activeMiningUrgency" exact="0"/>
+
+        <!-- ACTIVE-SCOUT FALLBACK: when "Auto Deploy Resource Probes" is on, the miner does not
+             just idle when the reachability gate produces no reachable ware. Instead it picks the
+             closest sector that hosts any candidate ware (find_closest_resource useundiscovered=true,
+             matching what NPC miners do at runtime per order.mining.routine.gt.xml ~1037), flies
+             there via move.generic (vanilla pattern from order.mining.routine.gt.xml ~1426-1438),
+             and drops a probe (vanilla pattern from order.move.recon.xml ~898-907 - own-faction
+             64km radius check, sector-legality check, then launch_resourceprobe). The probe
+             discovers asteroids in 64km radius, so the next main_loop iteration's stage-2 probe
+             (find_closest_resource useundiscovered=false) will surface the newly-discovered field
+             and normal mining resumes. Without this fallback a player-owned miner sitting in a
+             region whose basket-ware asteroids it has never personally surveyed would never
+             bootstrap (find_closest_resource excludes undiscovered for player ships).
+             Skipped when stayAtHome is on (the player has explicitly pinned the ship to a single
+             sector — scouting elsewhere violates that intent). Skipped when the ship has no probes
+             AND the buy slider is 0 (no way to fix the problem; idle is the right answer).
+             Throttled by this.$gtNextProbeResupplyAt + this.$gtNextScoutAt so we do not spam
+             scout flights when no candidates are discoverable. -->
+        <set_value name="$scoutAttempted" exact="false"/>
+        <do_if value="this.$autoDeployResourceProbes and not this.$stayAtHome and (not this.$gtNextScoutAt? or player.age ge this.$gtNextScoutAt)">
+          <set_value name="$scoutProbeCount" exact="@this.ship.ammostorage.{deployablecategory.resourceprobe}.count"/>
+          <do_if value="not $scoutProbeCount?">
+            <set_value name="$scoutProbeCount" exact="0"/>
+          </do_if>
+          <set_value name="$scoutCanRefill" exact="this.$maxResourceProbesToBuy gt 0"/>
+          <do_if value="$scoutProbeCount le 0 and $scoutCanRefill and (not this.$gtNextProbeResupplyAt? or player.age ge this.$gtNextProbeResupplyAt)">
+            <!-- No probes onboard but slider can buy: trigger GT_Maintenance which has its own
+                 add_build_to_modify_ship pipeline that bypasses interrupt.restock.xml's hard
+                 loadout-level guard at ~280 (`loadoutlevel le 0` cancels both ammo and unit
+                 resupply, blocking probe purchase on stripped player ships - the previous
+                 signal_objects param='resupply' approach hit this guard and aborted with
+                 "loadout level of 0 which disables resupply"). GT_Maintenance reads
+                 $autoDeployResourceProbes + $maxResourceProbesToBuy from GT_AIParameters and
+                 sizes the buy to the slider value, capped at this.ship.ammostorage.deployable.capacity. -->
+            <signal_objects object="player.galaxy" param="'GT_DoMaintenance'" param2="this.ship"/>
+            <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': scout fallback - no probes loaded, triggered GT_Maintenance for ' + this.$maxResourceProbesToBuy + ' probes (slider target)'" chance="this.$debugchance"/>
+            <set_value name="this.$gtNextProbeResupplyAt" exact="player.age + 5min"/>
+            <set_value name="$scoutAttempted" exact="true"/>
+          </do_if>
+          <do_elseif value="$scoutProbeCount gt 0 and @$candidateWares.count gt 0">
+            <!-- DEFERRED-RECYCLE: re-entering this block means the previous slice's reachability gate
+                 still failed - so whatever probe (if any) we dropped last time did NOT reveal enough
+                 of any wanted ware. Recycle it before dropping a new one elsewhere. The probe's
+                 64km survey persists permanently in the player's discovery state even after the probe
+                 itself is collected (X4 doesn't undo discoveries), so we lose nothing by picking it up.
+                 Only recycles if the previous probe is still operational AND in the ship's current
+                 sector (avoids a wasteful cross-sector flyback when the player or other event moved
+                 the ship). The CollectDeployables order pattern matches the RECOVER block in
+                 order.mining.routine.gt.xml ~1585-1589. -->
+            <do_if value="this.$scoutLastProbe? and @this.$scoutLastProbe.exists and @this.$scoutLastProbe.isoperational and @this.$scoutLastProbe.sector == this.ship.sector">
+              <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': SCOUT recycling previous probe in ' + this.ship.sector.knownname + ' (no ware became reachable since last drop) - flying to pick up before redeploying elsewhere'" chance="this.$debugchance"/>
+              <create_order id="'CollectDeployables'" object="this.ship" immediate="true">
+                <param name="targetlist" value="[this.$scoutLastProbe]"/>
+                <param name="debugchance" value="this.$debugchance"/>
+              </create_order>
+              <wait exact="1ms"/>
+            </do_if>
+            <do_if value="this.$scoutLastProbe?">
+              <remove_value name="this.$scoutLastProbe"/>
+            </do_if>
+            <!-- Find the closest undiscovered scout target. Walk candidate wares in order; first hit wins. -->
+            <set_value name="$scoutSector" exact="null"/>
+            <set_value name="$scoutPosition" exact="null"/>
+            <set_value name="$scoutWare" exact="null"/>
+            <do_for_each name="$scoutCandWare" in="$candidateWares">
+              <find_closest_resource sector="$scoutFindSector" position="$scoutFindPos" ware="$scoutCandWare" refobject="this.ship" minamount="1" useundiscovered="true"/>
+              <do_if value="@$scoutFindSector.exists">
+                <!-- Safety filter mirrors A4 used elsewhere in this script: gate distance within
+                     gather range, not enemy-owned, not hazardous-with-region-damage, not contested
+                     by attackers. The current sector IS a valid scout target - sectors span
+                     hundreds of km but a resource probe only discovers asteroids within 64km, so
+                     multiple probes can productively coexist in the same sector covering different
+                     asteroid fields. The find_object ... match_distance max="64km" guard at the
+                     launch site (~line 1128) already short-circuits if an operational own-faction
+                     probe is already within 64km of the find_closest_resource-returned position,
+                     so we cannot accidentally double-probe the same field. -->
+                <set_value name="$scoutGD" exact="@this.ship.gatedistance.{$scoutFindSector}"/>
+                <set_value name="$scoutSafe" exact="@$scoutFindSector.exists and $scoutGD ge 0 and $scoutGD le this.$maxGatherDistance"/>
+                <do_if value="$scoutSafe and @$scoutFindSector.owner and this.ship.owner.hasrelation.enemy.{$scoutFindSector.owner}">
+                  <set_value name="$scoutSafe" exact="false"/>
+                </do_if>
+                <do_if value="$scoutSafe and @$scoutFindSector.hashazardousregion and @$scoutFindSector.takesregiondamage">
+                  <set_value name="$scoutSafe" exact="false"/>
+                </do_if>
+                <do_if value="$scoutSafe and @$scoutFindSector.iscontested and @$scoutFindSector.contestingfactions.mayattack.{this.ship}">
+                  <set_value name="$scoutSafe" exact="false"/>
+                </do_if>
+                <do_if value="$scoutSafe">
+                  <set_value name="$scoutSector" exact="$scoutFindSector"/>
+                  <set_value name="$scoutPosition" exact="$scoutFindPos"/>
+                  <set_value name="$scoutWare" exact="$scoutCandWare"/>
+                </do_if>
+                <remove_value name="$scoutGD"/>
+                <remove_value name="$scoutSafe"/>
+              </do_if>
+              <do_if value="$scoutFindSector?">
+                <remove_value name="$scoutFindSector"/>
+              </do_if>
+              <do_if value="$scoutFindPos?">
+                <remove_value name="$scoutFindPos"/>
+              </do_if>
+              <do_if value="@$scoutSector.exists">
+                <break/>
+              </do_if>
+            </do_for_each>
+
+            <do_if value="@$scoutSector.exists">
+              <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': SCOUT - flying to ' + $scoutSector.knownname + ' to discover ' + $scoutWare.name + ' (probes onboard=' + $scoutProbeCount + ', gateDist=' + this.ship.gatedistance.{$scoutSector} + ')'" chance="this.$debugchance"/>
+              <set_command_action commandaction="commandaction.searchingresources"/>
+              <run_script name="'move.generic'" result="$scoutMoveOk">
+                <param name="destination" value="$scoutSector"/>
+                <param name="position" value="$scoutPosition"/>
+                <param name="endintargetzone" value="true"/>
+                <param name="debugchance" value="this.$debugchance"/>
+              </run_script>
+              <do_if value="$scoutMoveOk and @this.ship.sector and this.ship.sector == $scoutSector">
+                <!-- Drop a probe if no operational own-faction probe within 64km AND sector is legal.
+                     Vanilla pattern from order.move.recon.xml ~898-907 / ~1336-1342. -->
+                <find_object name="$scoutNearProbe" space="this.ship.sector" trueowner="this.ship.trueowner" deployablecategory="deployablecategory.resourceprobe">
+                  <match_distance object="this.ship" max="64km"/>
+                </find_object>
+                <do_if value="not @$scoutNearProbe.isoperational and this.ship.ammostorage.{deployablecategory.resourceprobe}.count gt 0">
+                  <set_value name="$scoutLegal" exact="true"/>
+                  <do_if value="@this.ship.sector.policefaction and @this.ship.sector.resources.illegalto.{this.ship.sector.policefaction}">
+                    <set_value name="$scoutLegal" exact="false"/>
+                  </do_if>
+                  <do_if value="$scoutLegal">
+                    <!-- Drop the probe and remember its handle on this.$scoutLastProbe so we can
+                         recycle it on the NEXT scout entry if it turned out to be useless. The
+                         "useless" decision is deferred to the next iteration on purpose: measuring
+                         contribution right after launch is unreliable (the engine needs a few seconds
+                         to compute survey + sector aggregates, and within the same script slice both
+                         probe.currentbestyield and sector.averagemaxyield read as 0 even on
+                         productive drops, which would force a false-positive recycle). The natural
+                         control flow gives us a perfect signal for free: if the probe revealed enough
+                         to make a ware reachable, the next slice's reachability gate passes and the
+                         miner exits this gate-failure branch into normal mining - we never re-enter
+                         the scout block, so the probe stays in place. If the probe did NOT make any
+                         ware reachable, the next slice re-enters this block and the deferred-recycle
+                         check at the top of the do_elseif (~line 1080) collects the previous probe
+                         before dropping a new one elsewhere. on_abort cleans up this.$scoutLastProbe
+                         if the order ends. -->
+                    <launch_resourceprobe name="this.$scoutLastProbe" object="this.ship"/>
+                    <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': SCOUT probe deployed in ' + this.ship.sector.knownname + ' for ' + $scoutWare.name + ' (probes remaining: ' + this.ship.ammostorage.{deployablecategory.resourceprobe}.count + ') - probe stays if mining resumes next slice, otherwise gets recycled on next scout entry'" chance="this.$debugchance"/>
+                  </do_if>
+                  <remove_value name="$scoutLegal"/>
+                </do_if>
+                <do_else>
+                  <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': SCOUT arrived but skipped probe deploy (operational probe already nearby OR sector illegal OR out of probes after move)'" chance="this.$debugchance"/>
+                </do_else>
+                <remove_value name="$scoutNearProbe"/>
+              </do_if>
+              <do_else>
+                <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': SCOUT move to ' + (if @$scoutSector.exists then $scoutSector.knownname else 'NONE') + ' failed or aborted - sector now=' + (if @this.ship.sector then this.ship.sector.knownname else 'NONE')" chance="this.$debugchance"/>
+              </do_else>
+              <remove_value name="$scoutMoveOk"/>
+              <set_value name="$scoutAttempted" exact="true"/>
+            </do_if>
+            <do_else>
+              <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': SCOUT skipped - no safe undiscovered candidate sector found within ' + this.$maxGatherDistance + ' jumps for any of ' + $candidateWares.count + ' candidate ware(s)'" chance="this.$debugchance"/>
+            </do_else>
+            <remove_value name="$scoutSector"/>
+            <remove_value name="$scoutPosition"/>
+            <remove_value name="$scoutWare"/>
+          </do_elseif>
+          <remove_value name="$scoutProbeCount"/>
+          <remove_value name="$scoutCanRefill"/>
+          <!-- Throttle scout retries. Short delay (15s) when a candidate WAS attempted - keeps the
+               deferred-recycle / redrop loop responsive so the miner can walk the sector hop-by-hop
+               until it finds productive yield, rather than idling 2 minutes between probe drops.
+               Longer delay (the demand-recheck interval, default 60s capped 10-300s) when NO
+               candidate was found, so we do not flood find_closest_resource when there is genuinely
+               nothing undiscovered in range. -->
+          <set_value name="this.$gtNextScoutAt" exact="player.age + (if $scoutAttempted then 15s else this.$demandRecheckInterval)"/>
+        </do_if>
+        <!-- Capture $scoutAttempted before remove so the trailing wait can react to it. When the
+             scout just dropped (or recycled+redropped) a probe, we want the next reachability check
+             to fire quickly so the miner either starts mining (probe was useful) or recycles + redrops
+             (probe was barren). 60s of idle "searching for resources" between probe drops feels stuck
+             from the player's perspective. -->
+        <set_value name="$scoutDidWork" exact="$scoutAttempted"/>
+        <remove_value name="$scoutAttempted"/>
+
+        <wait exact="if $scoutDidWork then 5s else this.$demandRecheckInterval"/>
+        <remove_value name="$scoutDidWork"/>
         <resume label="main_loop"/>
       </do_if>
       <set_value name="this.$activeMiningWare" exact="$selectedWare"/>
-      <set_value name="this.$activeMiningUrgency" exact="$wareUrgency.{$selectedWare}"/>
+      <set_value name="this.$activeMiningUrgency" exact="if $wareUrgency.{$selectedWare}? then $wareUrgency.{$selectedWare} else 0"/>
 
       <!-- Overflow handling: if all primary targets are full, optionally allow overflow sell -->
       <set_value name="$overflowSellMode" exact="false"/>
       <set_value name="$primaryCapacityAvailable" exact="true"/>
-      <do_if value="$wareHasPrimaryCapacity.{$selectedWare}? and not $wareHasPrimaryCapacity.{$selectedWare}">
+      <do_if value="$selectedWare != null and $wareHasPrimaryCapacity.{$selectedWare}? and not $wareHasPrimaryCapacity.{$selectedWare}">
         <set_value name="$overflowSellMode" exact="true"/>
         <set_value name="$primaryCapacityAvailable" exact="false"/>
       </do_if>
@@ -861,10 +1410,9 @@
       <!-- Overflow exception:
            if all player demand stations are full, only mine wares that currently have sell opportunities. -->
       <do_if value="$overflowSellMode and this.$allowOverflowSellToOthers">
-        <do_if value="not global.$GT_FallbackActivations?">
-          <set_value name="global.$GT_FallbackActivations" exact="table[]"/>
-        </do_if>
-        <set_value name="global.$GT_FallbackActivations.{'Miner.OverflowSellFallback'}" exact="if global.$GT_FallbackActivations.{'Miner.OverflowSellFallback'}? then global.$GT_FallbackActivations.{'Miner.OverflowSellFallback'} + 1 else 1"/>
+        <!-- Counter bump removed; see the long comment at the buy-offer pass (~line 734) for
+             why this exact pattern crashes in AI script contexts. The behavior of the overflow
+             branch is unaffected. -->
         <set_value name="$overflowSearchRefSector" exact="if $range? and $range.isclass.sector then $range else (if $range? and $range.sector? then @$range.sector else this.sector)"/>
         <run_script name="'lib.find.sectors.inrange'" result="$overflowSellSpaces">
           <param name="refobject" value="$overflowSearchRefSector"/>
@@ -941,7 +1489,7 @@
       <!-- Choose concrete primary delivery station for selected ware -->
       <set_value name="$primaryDeliveryStation" exact="null"/>
       <set_value name="$primaryBestDeficit" exact="-1"/>
-      <do_if value="$selectedWare? and $demandStations.count gt 0 and not $overflowSellMode">
+      <do_if value="$selectedWare? and $selectedWare != null and $demandStations.count gt 0 and not $overflowSellMode">
         <!-- Chunk primary-station search to avoid long single-frame scans on large station lists. -->
         <set_value name="this.$minerPrimaryDemandStations" exact="$demandStations"/>
         <set_value name="this.$minerPrimarySelectedWare" exact="$selectedWare"/>
@@ -1018,7 +1566,7 @@
       <set_value name="this.$minerOverflowCommanderBackup" exact="null"/>
 
       <!-- Register deterministic station assignments and live intents -->
-      <do_if value="this.$fleetBalancing and $selectedWare? and $demandStations.count gt 0">
+      <do_if value="this.$fleetBalancing and $selectedWare? and $selectedWare != null and $demandStations.count gt 0">
         <set_value name="this.$minerAssignedWare" exact="$selectedWare"/>
         <set_value name="this.$minerAssignDemandStations" exact="$demandStations"/>
         <set_value name="this.$minerAssignSelectedWare" exact="$selectedWare"/>
@@ -1139,7 +1687,7 @@
       <!-- Lightweight diagnostics snapshot for GT Diagnose -->
       <set_value name="$diagSupplierCount" exact="0"/>
       <set_value name="$diagIntentCount" exact="0"/>
-      <do_if value="$selectedWare? and $demandStations.count gt 0">
+      <do_if value="$selectedWare? and $selectedWare != null and $demandStations.count gt 0">
         <set_value name="this.$minerDiagDemandStations" exact="$demandStations"/>
         <set_value name="this.$minerDiagSelectedWare" exact="$selectedWare"/>
         <set_value name="this.$minerDiagIndex" exact="1"/>
@@ -1162,35 +1710,50 @@
             <wait exact="1ms"/>
           </do_if>
         </do_while>
-        <set_value name="$diagSupplierCount" exact="this.$minerDiagSupplierCount"/>
-        <set_value name="$diagIntentCount" exact="this.$minerDiagIntentCount"/>
-        <remove_value name="this.$minerDiagDemandStations"/>
-        <remove_value name="this.$minerDiagSelectedWare"/>
-        <remove_value name="this.$minerDiagIndex"/>
-        <remove_value name="this.$minerDiagSupplierCount"/>
-        <remove_value name="this.$minerDiagIntentCount"/>
+        <!-- Defensive reads: the cooperative <wait exact="1ms"/> inside the do_while above is an
+             AI-scheduler yield point; during that yield the order can be aborted (on_abort at
+             ~1894-1898 removes ALL this.$minerDiag* scratch vars), or an AI-director frame import
+             after a save-load can re-enter the script in this region with the persistent this.$
+             vars stripped. Either way the next tick resumes here past the wait, finds the counts
+             gone, and crashes "Property lookup failed: this.$minerDiagSupplierCount/IntentCount"
+             (visible in log at lines 259/265 of the captured log). Falling back to 0 keeps the
+             diag snapshot meaningful (0 suppliers/intents = "no fleet coordination data this
+             slice") instead of crashing the slice setup mid-cycle; the next main_loop iteration
+             will re-run the chunked walk cleanly. -->
+        <set_value name="$diagSupplierCount" exact="if this.$minerDiagSupplierCount? then this.$minerDiagSupplierCount else 0"/>
+        <set_value name="$diagIntentCount" exact="if this.$minerDiagIntentCount? then this.$minerDiagIntentCount else 0"/>
+        <do_if value="this.$minerDiagDemandStations?"><remove_value name="this.$minerDiagDemandStations"/></do_if>
+        <do_if value="this.$minerDiagSelectedWare?"><remove_value name="this.$minerDiagSelectedWare"/></do_if>
+        <do_if value="this.$minerDiagIndex?"><remove_value name="this.$minerDiagIndex"/></do_if>
+        <do_if value="this.$minerDiagSupplierCount?"><remove_value name="this.$minerDiagSupplierCount"/></do_if>
+        <do_if value="this.$minerDiagIntentCount?"><remove_value name="this.$minerDiagIntentCount"/></do_if>
       </do_if>
-      <!-- Diagnostic snapshot: lightweight payload for the in-game GT Diagnose UI.
-           The diagnose tool runs its own dedicated resource scan (gt_context_diagnose.xml
-           SECTION 3b) using sector.resources.{ware} / sector.averagemaxyield.{ware} on the
-           same gather-distance footprint, so we no longer ship the full per-ware scoring
-           table here — only the runtime fields the UI needs to render coordination /
-           policy / active-mining state. -->
-      <signal_objects object="player.galaxy" param="'GT_Miner_Diag_Update'" param2="table[
-        $Ship = this.ship,
-        $SelectedWare = $selectedWare,
-        $PrimaryDeliveryStation = $primaryDeliveryStation,
-        $Urgency = this.$activeMiningUrgency,
-        $OverflowMode = $overflowSellMode,
-        $PrimaryCapacityAvailable = $primaryCapacityAvailable,
-        $OverflowFallbackAllowed = this.$allowOverflowSellToOthers,
-        $OverflowDetachedCommander = this.$minerDetachedForOverflow,
-        $TargetStationCount = $demandStations.count,
-        $SupplierCount = $diagSupplierCount,
-        $IntentCount = $diagIntentCount,
-        $IntentPhase = $intentPhase,
-        $Timestamp = player.age
-      ]"/>
+      <!-- Diagnostic snapshot: lightweight runtime telemetry for the GT Diagnose "Miner Coordination"
+           section (selected ware, urgency, overflow flags, supplier/intent/target counts, intent phase,
+           timestamp). Strictly runtime telemetry that cannot be derived from ship/order settings.
+           The diag tool derives EVERY decision-affecting field (home anchor, target stations, candidate
+           wares, gather/sell range) directly from `$ship.defaultorder.$xxx`; do not extend this payload
+           with anything the diag could read on its own.
+           Built field-by-field on a persistent ship-blackboard table (`this.$diagSnapshot`) instead of
+           an inline `table[$A=..., $B=...]` literal because X4 silently truncates an inline table
+           when ANY value in the same literal evaluates to null at construction time (e.g.
+           `$primaryDeliveryStation` between selection passes), causing the MD receiver to store an
+           entry that only keeps the keys appearing before the first null. -->
+      <set_value name="this.$diagSnapshot" exact="table[$Ship = this.ship, $Timestamp = player.age]"/>
+      <set_value name="this.$diagSnapshot.$SelectedWare" exact="$selectedWare"/>
+      <set_value name="this.$diagSnapshot.$Urgency" exact="this.$activeMiningUrgency"/>
+      <set_value name="this.$diagSnapshot.$OverflowMode" exact="$overflowSellMode"/>
+      <set_value name="this.$diagSnapshot.$PrimaryCapacityAvailable" exact="$primaryCapacityAvailable"/>
+      <set_value name="this.$diagSnapshot.$OverflowFallbackAllowed" exact="this.$allowOverflowSellToOthers"/>
+      <set_value name="this.$diagSnapshot.$OverflowDetachedCommander" exact="if this.$minerDetachedForOverflow? and this.$minerDetachedForOverflow != null then this.$minerDetachedForOverflow else false"/>
+      <set_value name="this.$diagSnapshot.$TargetStationCount" exact="$demandStations.count"/>
+      <set_value name="this.$diagSnapshot.$SupplierCount" exact="$diagSupplierCount"/>
+      <set_value name="this.$diagSnapshot.$IntentCount" exact="$diagIntentCount"/>
+      <set_value name="this.$diagSnapshot.$IntentPhase" exact="$intentPhase"/>
+      <do_if value="$primaryDeliveryStation? and $primaryDeliveryStation != null and $primaryDeliveryStation.exists">
+        <set_value name="this.$diagSnapshot.$PrimaryDeliveryStation" exact="$primaryDeliveryStation"/>
+      </do_if>
+      <signal_objects object="player.galaxy" param="'GT_Miner_Diag_Update'" param2="this.$diagSnapshot"/>
 
       <!-- Map Galaxy-Miner params to vanilla mining routine -->
       <!-- Re-read distance params from current order source before capping.
@@ -1213,8 +1776,9 @@
       </do_elseif>
       <set_value name="$useVanillaXPOnly" exact="global.$GT_GlobalSettings? and global.$GT_GlobalSettings.$XP? and global.$GT_GlobalSettings.$XP.$UseVanillaXPOnly? and global.$GT_GlobalSettings.$XP.$UseVanillaXPOnly"/>
       <do_if value="$useVanillaXPOnly">
-        <set_value name="this.$maxGatherDistance" exact="$minerRuntimeMaxGatherRaw"/>
-        <set_value name="this.$maxSellDistance" exact="$minerRuntimeMaxSellRaw"/>
+        <!-- 0 valid (stay-local). -->
+        <set_value name="this.$maxGatherDistance" exact="[0, $minerRuntimeMaxGatherRaw].max"/>
+        <set_value name="this.$maxSellDistance" exact="[0, $minerRuntimeMaxSellRaw].max"/>
       </do_if>
       <do_else>
         <!-- Derive pilot jump cap inline (same mapping as MK3/MK4),
@@ -1242,8 +1806,9 @@
         <do_else>
           <set_value name="$pilotMaxJumps" exact="25"/>
         </do_else>
-        <set_value name="this.$maxGatherDistance" exact="[$minerRuntimeMaxGatherRaw, $pilotMaxJumps].min"/>
-        <set_value name="this.$maxSellDistance" exact="[$minerRuntimeMaxSellRaw, $pilotMaxJumps].min"/>
+        <!-- 0 valid (stay-local). Pilot-jump cap still applies as upper bound. -->
+        <set_value name="this.$maxGatherDistance" exact="[0, [$minerRuntimeMaxGatherRaw, $pilotMaxJumps].min].max"/>
+        <set_value name="this.$maxSellDistance" exact="[0, [$minerRuntimeMaxSellRaw, $pilotMaxJumps].min].max"/>
       </do_else>
       <set_value name="$effectiveMaxGatherDistance" exact="this.$maxGatherDistance"/>
       <set_value name="$effectiveMaxSellDistance" exact="this.$maxSellDistance"/>
@@ -1255,12 +1820,39 @@
           <set_value name="$effectiveMaxSellDistanceHomeSafe" exact="$homeStationDistance"/>
         </do_if>
       </do_if>
+      <!-- Defense-in-depth: the early-return guard at ~899 catches null $selectedWare on a clean
+           run (`not $selectedWare? or $selectedWare == null`), but a corrupted AI-director frame
+           import (see "is not compatible with caller context" save-compat fix) can resume the
+           script mid-cycle, bypassing that guard with $selectedWare=null. Building [null] here
+           would propagate to the routine as a [null] basket and crash downstream on
+           .cargo.{null}.count (line ~1491), .resources.{null} / .averagemaxyield.{null} in the
+           routine's basket loop (the routine has its own null-skip per-iteration guard, but the
+           post-loop NO_SECTOR_FOR_WARE diagnostic and the "Mining basket: [null]" debug_text
+           still touched the null). Bail to main_loop instead - the next cycle re-runs reachability
+           gating and either picks a non-null ware or invokes the active-scout fallback. -->
+      <do_if value="not $selectedWare? or $selectedWare == null">
+        <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': ABORT_SLICE - $selectedWare is null at runWareBasket construction (post-guard bypass; likely save-frame import). Re-entering main_loop.'" chance="100" filter="error"/>
+        <set_value name="this.$activeMiningWare" exact="null"/>
+        <set_value name="this.$activeMiningUrgency" exact="0"/>
+        <wait exact="this.$demandRecheckInterval"/>
+        <resume label="main_loop"/>
+      </do_if>
       <set_value name="$runWareBasket" exact="[$selectedWare]"/>
       <set_value name="$minbuy" exact="0"/>
       <set_value name="$maxbuy" exact="if this.$stayAtHome then 0 else $effectiveMaxGatherDistance"/>
       <set_value name="$minsell" exact="0"/>
       <set_value name="$maxsell" exact="$effectiveMaxSellDistanceHomeSafe"/>
-      <set_value name="$resourcescout" exact="this.$autoDeployResourceProbes"/>
+      <!-- Vanilla $resourcescout (order.mining.routine.xml line 56-57) puts the ship into a SCOUT-ONLY
+           mode: the routine branches into order.move.recon at label="collect" (~line 1426 of the v8 GT
+           fork) and never creates a MiningCollect order, so the ship deploys probes and looks for
+           resources but does not actually mine. Mapping our $autoDeployResourceProbes player toggle to
+           $resourcescout therefore broke mining for any miner with the toggle on.
+           Resolution: keep $resourcescout pinned to false here (so the routine mines normally) and
+           pass $autoDeployResourceProbes via the new $autodeployresourceprobes param, which triggers
+           opportunistic launch_resourceprobe AFTER each MiningCollect slice in the routine (vanilla
+           pattern from order.move.recon.xml ~898-907; see comment block in order.mining.routine.gt.xml
+           just before label="sellwares"). -->
+      <set_value name="$resourcescout" exact="false"/>
       <set_value name="this.$miner_prevCargoTotal" exact="0"/>
       <set_value name="this.$miner_prevCargoByWare" exact="table[]"/>
       <set_value name="this.$miner_prevStationCargoByStation" exact="table[]"/>
@@ -1291,7 +1883,7 @@
       <do_if value="this.$miner_prevDockedStation? and this.$miner_prevDockedStation.exists and not this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}?">
         <set_value name="this.$miner_prevStationCargoByStation.{this.$miner_prevDockedStation}" exact="this.$miner_prevDockedStation.cargo.{$selectedWare}.count"/>
       </do_if>
-      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Run mining slice ware=' + $selectedWare.name + ', urgency=' + this.$activeMiningUrgency + ', overflow=' + $overflowSellMode + ', primaryStation=' + (if $primaryDeliveryStation? and $primaryDeliveryStation.exists then $primaryDeliveryStation.idcode else 'NONE') + ', range=' + (if $range? then $range.knownname else 'null') + ', rangeClass=' + (if $range? then $range.class else 'null') + ', stayAtHome=' + this.$stayAtHome + ', minbuy=' + $minbuy + ', maxbuy=' + $maxbuy + ', minsell=' + $minsell + ', maxsell=' + $maxsell + ', cargoBefore=' + this.$miner_prevCargoTotal + ', commander=' + (if this.ship.commander? and this.ship.commander.exists then this.ship.commander.idcode else 'NONE') + ', default=' + (if this.ship.defaultorder? then @this.ship.defaultorder.id else 'NONE')" chance="this.$debugchance"/>
+      <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': Run mining slice ware=' + (if $selectedWare? and $selectedWare != null then $selectedWare.name else 'NULL') + ', urgency=' + this.$activeMiningUrgency + ', overflow=' + $overflowSellMode + ', primaryStation=' + (if $primaryDeliveryStation? and $primaryDeliveryStation.exists then $primaryDeliveryStation.idcode else 'NONE') + ', range=' + (if $range? then $range.knownname else 'null') + ', rangeClass=' + (if $range? then $range.class else 'null') + ', stayAtHome=' + this.$stayAtHome + ', minbuy=' + $minbuy + ', maxbuy=' + $maxbuy + ', minsell=' + $minsell + ', maxsell=' + $maxsell + ', cargoBefore=' + this.$miner_prevCargoTotal + ', commander=' + (if this.ship.commander? and this.ship.commander.exists then this.ship.commander.idcode else 'NONE') + ', default=' + (if this.ship.defaultorder? then @this.ship.defaultorder.id else 'NONE')" chance="this.$debugchance"/>
 
       <!-- Run GT mining routine fork in time slices so GT maintenance/training can run between cycles -->
       <set_value name="$strictGatherSector" exact="if this.$stayAtHome and this.$homeSector? and this.$homeSector.exists then this.$homeSector else null"/>
@@ -1309,6 +1901,15 @@
         <param name="minsell" value="$minsell"/>
         <param name="maxsell" value="$maxsell"/>
         <param name="resourcescout" value="$resourcescout"/>
+        <!-- Defensive: <init> only runs at order creation (NOT on save load), so on legacy saves
+             where these blackboard variables were never materialized the property lookup would
+             crash the run_script call. The <patch sinceversion=...> on the corresponding order
+             params backfills the order param defaults, but if a save was made AFTER param-add but
+             BEFORE init re-ran (e.g. Galaxy-Miner created on a script frame import with a
+             corrupted call stack - see "is not compatible with caller context" in the X4 log),
+             this.$X may still be missing. Coerce via existence check + fallback to 0/false. -->
+        <param name="autodeployresourceprobes" value="if this.$autoDeployResourceProbes? then this.$autoDeployResourceProbes else false"/>
+        <param name="maxresourceprobestobuy" value="if this.$maxResourceProbesToBuy? then this.$maxResourceProbesToBuy else 0"/>
         <param name="duration" value="this.$demandRecheckInterval"/>
         <param name="debugchance" value="this.$debugchance"/>
       </run_script>
@@ -1441,7 +2042,7 @@
       <set_value name="this.$minerOverflowCommanderBackup" exact="null"/>
       <debug_text text="'[GT-Miner] ' + this.ship.idcode + ': on_abort restored commander assignment after overflow detach'" chance="this.$debugchance"/>
     </do_if>
-    <do_if value="this.$minerAssignedWare? and this.$minerAssignedStations? and this.$minerAssignedStations.count gt 0">
+    <do_if value="this.$minerAssignedWare? and this.$minerAssignedWare != null and this.$minerAssignedStations? and this.$minerAssignedStations.count gt 0">
       <do_all exact="this.$minerAssignedStations.count" counter="$asi">
         <set_value name="$assignedStation" exact="this.$minerAssignedStations.{$asi}"/>
         <remove_value name="global.$GT_MinerStationAssignments.{$assignedStation}.{this.$minerAssignedWare}.{this.ship}"/>
@@ -1533,8 +2134,10 @@
     <do_if value="this.$minerDiagIndex?"><remove_value name="this.$minerDiagIndex"/></do_if>
     <do_if value="this.$minerDiagSupplierCount?"><remove_value name="this.$minerDiagSupplierCount"/></do_if>
     <do_if value="this.$minerDiagIntentCount?"><remove_value name="this.$minerDiagIntentCount"/></do_if>
+    <do_if value="this.$scoutLastProbe?"><remove_value name="this.$scoutLastProbe"/></do_if>
     <do_if value="this.$minerPrevStationDemandStations?"><remove_value name="this.$minerPrevStationDemandStations"/></do_if>
     <do_if value="this.$minerPrevStationSelectedWare?"><remove_value name="this.$minerPrevStationSelectedWare"/></do_if>
     <do_if value="this.$minerPrevStationIndex?"><remove_value name="this.$minerPrevStationIndex"/></do_if>
+    <do_if value="this.$diagSnapshot?"><remove_value name="this.$diagSnapshot"/></do_if>
   </on_abort>
 </aiscript>

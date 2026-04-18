@@ -786,7 +786,7 @@
     <t id="31017">Stay at Home</t>
     <t id="31117">Restrict mining/selling to home area except overflow fallback runs</t>
     <t id="31018">Auto Deploy Resource Probes</t>
-    <t id="31118">Deploy loaded resource probes automatically and include probes in maintenance restock</t>
+    <t id="31118">Deploy probes after each mining slice; recover stale probes from depleted sectors; when no resources are reachable, fly to the closest sector that hosts a basket ware (even undiscovered) and drop a probe to bootstrap discovery — then resume normal mining.</t>
     <t id="31019">Max Gather Distance</t>
     <t id="31119">Maximum gate distance for gathering (0 uses pilot/commander skill cap)</t>
     <t id="31020">Max Sell Distance</t>
@@ -807,6 +807,8 @@
     <t id="31127">Notification level: 0=Quiet, 1=Normal, 2=Verbose</t>
     <t id="31028">Player Stations Only</t>
     <t id="31128">When enabled, only player-owned stations are considered as demand targets.</t>
+    <t id="31029">Max Resource Probes to Buy</t>
+    <t id="31129">How many resource probes to buy when the ship runs out (auto-buy via resupply). 0 disables buying. Cap is the ship's deployable capacity. Restocking is only triggered when probe stock hits zero, not after every deploy. Stale probes in depleted sectors are auto-collected for redeployment when 'Auto Deploy Resource Probes' is on.</t>
 
     <!-- ========================================== -->
     <!-- GalaxyTrader MK4 — Supply Trader           -->

@@ -757,7 +757,32 @@
             <set_value name="$minerDiag" exact="global.$GT_MinerDiag.{$ship}"/>
           </do_if>
 
-          <set_value name="$selectedWareText" exact="'UNKNOWN'"/>
+          <!-- Derive a player-meaningful "Selected Ware" label when the snapshot lacks $SelectedWare
+               (or the snapshot itself is absent because the miner is mid-slice and on_abort cleaned
+               the blackboard, or because the miner has never published yet on a fresh load).
+               The miner publishes $SelectedWare per slice; between slices the field is absent.
+               "UNKNOWN" was misleading because for an unrestricted miner there is no per-cycle
+               selection — the basket is empty and any minable ware is fair game. Probe the basket
+               configuration directly so we can render "All minable wares" when no basket
+               constrains the pool, "Pending (between mining slices)" when a basket IS set but no
+               slice has published yet, or the actual ware name when the snapshot has it.
+               $gtOrder is initialized further down (line ~891) so we read $ship.defaultorder /
+               $ship.warebasket.list directly here. The same Assist unwrap pattern as $gtOrder is
+               applied so subordinate miners see their commander's basket configuration. -->
+          <set_value name="$selWareOrder" exact="@$ship.defaultorder"/>
+          <do_if value="$ship.commander? and $ship.commander.defaultorder?">
+            <set_value name="$selWareOrder" exact="if @$ship.commander.defaultorder.id == 'Assist' and $ship.commander.defaultorder.$baseorder? then $ship.commander.defaultorder.$baseorder else $ship.commander.defaultorder"/>
+          </do_if>
+          <set_value name="$selWareBasketEmpty" exact="true"/>
+          <do_if value="$selWareOrder? and $selWareOrder.$resourceBasket? and $selWareOrder.$resourceBasket.count gt 0">
+            <set_value name="$selWareBasketEmpty" exact="false"/>
+          </do_if>
+          <do_if value="$selWareBasketEmpty and $ship.warebasket? and $ship.warebasket.list? and $ship.warebasket.list.count gt 0">
+            <set_value name="$selWareBasketEmpty" exact="false"/>
+          </do_if>
+          <set_value name="$selWareFallbackText" exact="if $selWareBasketEmpty then 'All minable wares (no basket configured — auto-pick)' else 'Pending (between mining slices)'"/>
+
+          <set_value name="$selectedWareText" exact="$selWareFallbackText"/>
           <set_value name="$urgencyText" exact="'0'"/>
           <set_value name="$overflowText" exact="'false'"/>
           <set_value name="$targetsText" exact="'0'"/>
@@ -775,7 +800,7 @@
 
           <do_if value="$minerDiag?">
             <set_value name="$diagStatus" exact="'PASS'"/>
-            <set_value name="$selectedWareText" exact="if $minerDiag.$SelectedWare? then '' + $minerDiag.$SelectedWare else 'UNKNOWN'"/>
+            <set_value name="$selectedWareText" exact="if $minerDiag.$SelectedWare? and $minerDiag.$SelectedWare != null then '' + $minerDiag.$SelectedWare else $selWareFallbackText"/>
             <set_value name="$urgencyText" exact="if $minerDiag.$Urgency? then '' + $minerDiag.$Urgency else '0'"/>
             <set_value name="$overflowText" exact="if $minerDiag.$OverflowMode? then 'true' else 'false'"/>
             <set_value name="$targetsText" exact="if $minerDiag.$TargetStationCount? then '' + $minerDiag.$TargetStationCount else '0'"/>
@@ -1320,18 +1345,37 @@
           <append_to_list name="$sec3.$Rows" exact="table[$Check = 'Destination Stations', $Status = if $mk2DestCount gt 0 then 'PASS' else 'FAIL', $Detail = '' + $mk2DestCount + ' stations']"/>
         </do_if>
 
-        <!-- Miner-specific: Home Anchor, Target Stations, Overflow -->
+        <!-- Miner-specific: Home Anchor, Target Stations, Overflow.
+             All values read from $ship.defaultorder (via $gtOrder, which already unwraps Assist
+             commander-order indirection upstream); the diag tool intentionally does NOT consult
+             the miner's runtime snapshot for any decision-affecting field — it is the analyzer
+             of the player's configured order, not a mirror of the AI's internal state.
+             Home anchor lookup order:
+               1. $gtOrder.$homeStation             — explicit station picker, the user's choice
+               2. $gtOrder.$homePosition.{1}        — sector slot of the position param; this is
+                                                     the canonical home-sector source after the
+                                                     miner's init auto-anchors a ship that the
+                                                     user did not explicitly anchor (init writes
+                                                     `[$homeSector, $homeSector.coreposition]`
+                                                     into homePosition via edit_order_param at
+                                                     order.trade.galaxyminer.xml lines 121-128 /
+                                                     150-160). homePosition is type=position and
+                                                     visible to MD; the legacy $homeSector param
+                                                     is type=internal and not reliably MD-visible.
+               3. $gtOrder.$homeSector              — legacy/internal fallback for older saves
+                                                     where homePosition was not yet written. -->
         <do_if value="$orderId == 'GalaxyMiner'">
           <append_to_list name="$sec3.$Rows" exact="table[$Check = '--- Miner Specific ---', $Status = 'INFO', $Detail = '']"/>
           <set_value name="$minerHome" exact="'Not set'"/>
-          <do_if value="$gtOrder?">
-            <do_if value="$gtOrder.$homeStation? and $gtOrder.$homeStation.exists">
-              <set_value name="$minerHome" exact="'Station: ' + $gtOrder.$homeStation.knownname"/>
-            </do_if>
-            <do_elseif value="$gtOrder.$homeSector? and $gtOrder.$homeSector.exists">
-              <set_value name="$minerHome" exact="'Sector: ' + $gtOrder.$homeSector.knownname"/>
-            </do_elseif>
+          <do_if value="$gtOrder? and $gtOrder.$homeStation? and $gtOrder.$homeStation.exists">
+            <set_value name="$minerHome" exact="'Station: ' + $gtOrder.$homeStation.knownname"/>
           </do_if>
+          <do_elseif value="$gtOrder? and $gtOrder.$homePosition? and $gtOrder.$homePosition.{1}? and $gtOrder.$homePosition.{1}.exists and $gtOrder.$homePosition.{1}.isclass.sector">
+            <set_value name="$minerHome" exact="'Sector: ' + $gtOrder.$homePosition.{1}.knownname"/>
+          </do_elseif>
+          <do_elseif value="$gtOrder? and $gtOrder.$homeSector? and $gtOrder.$homeSector.exists">
+            <set_value name="$minerHome" exact="'Sector: ' + $gtOrder.$homeSector.knownname"/>
+          </do_elseif>
           <append_to_list name="$sec3.$Rows" exact="table[$Check = 'Home Anchor', $Status = if $minerHome == 'Not set' then 'FAIL' else 'PASS', $Detail = $minerHome]"/>
           
           <set_value name="$minerTargetStations" exact="0"/>
@@ -1380,7 +1424,25 @@
           <do_if value="$minerDiag? and $minerDiag.$OverflowMode? and $minerDiag.$OverflowMode">
             <set_value name="$diagMinerOverflowMode" exact="true"/>
           </do_if>
-          <!-- Rebuild primary station list from miner settings for policy-accurate diagnose filtering. -->
+          <!-- Rebuild primary station list from the player's configured miner order params.
+               Reads strictly from $gtOrder ($ship.defaultorder, Assist-unwrapped) — the diag
+               tool does NOT consult the miner's runtime snapshot for any station-set decision;
+               its job is to evaluate what the player configured, not what the AI happens to be
+               iterating right now.
+               Resolved home sector for the in-sector filter follows the same priority chain as
+               the Home Anchor row: $gtOrder.$homeStation.sector > $gtOrder.$homePosition.{1}
+               (sector slot of the position param, written by the miner's init via
+               edit_order_param) > $gtOrder.$homeSector (legacy/internal). -->
+          <set_value name="$diagMinerHomeSector" exact="null"/>
+          <do_if value="$gtOrder? and $gtOrder.$homeStation? and $gtOrder.$homeStation.exists and $gtOrder.$homeStation.sector?">
+            <set_value name="$diagMinerHomeSector" exact="@$gtOrder.$homeStation.sector"/>
+          </do_if>
+          <do_elseif value="$gtOrder? and $gtOrder.$homePosition? and $gtOrder.$homePosition.{1}? and $gtOrder.$homePosition.{1}.exists and $gtOrder.$homePosition.{1}.isclass.sector">
+            <set_value name="$diagMinerHomeSector" exact="$gtOrder.$homePosition.{1}"/>
+          </do_elseif>
+          <do_elseif value="$gtOrder? and $gtOrder.$homeSector? and $gtOrder.$homeSector.exists">
+            <set_value name="$diagMinerHomeSector" exact="$gtOrder.$homeSector"/>
+          </do_elseif>
           <do_if value="$gtOrder? and $gtOrder.$stationList? and $gtOrder.$stationList.count gt 0">
             <do_all exact="$gtOrder.$stationList.count" counter="$dsti">
               <set_value name="$diagStationCandidate" exact="$gtOrder.$stationList.{$dsti}"/>
@@ -1389,7 +1451,7 @@
                 <do_if value="$diagMinerPlayerStationsOnly and $diagStationCandidate.owner != $ship.owner">
                   <set_value name="$diagAllowStation" exact="false"/>
                 </do_if>
-                <do_if value="$gtOrder.$homeSector? and $gtOrder.$homeSector.exists and $diagStationCandidate.sector != $gtOrder.$homeSector">
+                <do_if value="$diagMinerHomeSector? and $diagMinerHomeSector.exists and $diagStationCandidate.sector != $diagMinerHomeSector">
                   <set_value name="$diagAllowStation" exact="false"/>
                 </do_if>
                 <do_if value="$diagAllowStation and not $diagMinerPrimaryStations.indexof.{$diagStationCandidate}">
@@ -1398,8 +1460,51 @@
               </do_if>
             </do_all>
           </do_if>
-          <do_if value="$gtOrder? and $gtOrder.$homeStation? and $gtOrder.$homeStation.exists and $gtOrder.$homeStation.isoperational and ((not $diagMinerPlayerStationsOnly) or ($gtOrder.$homeStation.owner == $ship.owner)) and ((not $gtOrder.$homeSector?) or (not $gtOrder.$homeSector.exists) or ($gtOrder.$homeStation.sector == $gtOrder.$homeSector)) and not $diagMinerPrimaryStations.indexof.{$gtOrder.$homeStation}">
+          <do_if value="$gtOrder? and $gtOrder.$homeStation? and $gtOrder.$homeStation.exists and $gtOrder.$homeStation.isoperational and ((not $diagMinerPlayerStationsOnly) or ($gtOrder.$homeStation.owner == $ship.owner)) and ((not $diagMinerHomeSector?) or (not $diagMinerHomeSector.exists) or ($gtOrder.$homeStation.sector == $diagMinerHomeSector)) and not $diagMinerPrimaryStations.indexof.{$gtOrder.$homeStation}">
             <append_to_list name="$diagMinerPrimaryStations" exact="$gtOrder.$homeStation"/>
+          </do_if>
+          <!-- Fallback primary-station discovery for the configuration where the player has
+               NOT set an explicit stationList nor a homeStation. The miner runtime in that
+               case (order.trade.galaxyminer.xml ~561-616) scans the resolved home sector
+               (and sectors within the sell radius via lib.find.sectors.inrange) for ALL
+               operational stations and treats every match as a $demandStation; the actual
+               "is this a buyer?" decision is then deferred to find_buy_offer in the routine.
+               Without mirroring that fallback here, the diag policy filter at ~2524
+               (`if not $diagOfferIsPrimary then $diagOfferAllowed = false`) would treat
+               every find_buy_offer hit as non-primary and silently reject it, producing the
+               misleading "0 sell offers" / "0 buy offers" verdict even when the miner is
+               actively and successfully selling to those same stations on the same slice
+               (see runtime: liveBuyOffers=1, primaryStation=EEJ-168 -> trade order created).
+               Self-contained per the diag's design rule: we re-derive from $gtOrder, never
+               from the miner's runtime snapshot. Sector scope mirrors the runtime's choice
+               of $maxSellDistance (already captured into $diagSearchDistance for miners). -->
+          <do_if value="$diagMinerPrimaryStations.count == 0 and $diagMinerHomeSector? and $diagMinerHomeSector.exists">
+            <set_value name="$diagFallbackSectors" exact="[$diagMinerHomeSector]"/>
+            <do_if value="$diagSearchDistance? and $diagSearchDistance gt 0">
+              <find_sector name="$diagFallbackNearby" space="player.galaxy" multiple="true">
+                <match_gate_distance object="$diagMinerHomeSector" min="0" max="$diagSearchDistance"/>
+              </find_sector>
+              <do_if value="$diagFallbackNearby? and $diagFallbackNearby.count gt 0">
+                <do_all exact="$diagFallbackNearby.count" counter="$dfsi">
+                  <set_value name="$dfSec" exact="$diagFallbackNearby.{$dfsi}"/>
+                  <do_if value="$dfSec? and $dfSec.exists and $dfSec != $diagMinerHomeSector and not $diagFallbackSectors.indexof.{$dfSec}">
+                    <append_to_list name="$diagFallbackSectors" exact="$dfSec"/>
+                  </do_if>
+                </do_all>
+              </do_if>
+            </do_if>
+            <do_all exact="$diagFallbackSectors.count" counter="$dfsj">
+              <set_value name="$dfScanSec" exact="$diagFallbackSectors.{$dfsj}"/>
+              <find_station name="$dfStations" space="$dfScanSec" checkoperational="true" multiple="true"/>
+              <do_if value="$dfStations? and $dfStations.count gt 0">
+                <do_all exact="$dfStations.count" counter="$dfski">
+                  <set_value name="$dfStation" exact="$dfStations.{$dfski}"/>
+                  <do_if value="$dfStation? and $dfStation.exists and $dfStation.isclass.station and $dfStation.isoperational and ((not $diagMinerPlayerStationsOnly) or ($dfStation.owner == $ship.owner)) and not $diagMinerPrimaryStations.indexof.{$dfStation}">
+                    <append_to_list name="$diagMinerPrimaryStations" exact="$dfStation"/>
+                  </do_if>
+                </do_all>
+              </do_if>
+            </do_all>
           </do_if>
           <set_value name="$diagMinerPolicySummary" exact="'Primary mode: only primary stations below ' + $diagMinerOverflowThreshold + '% target fill'"/>
           <do_if value="$diagMinerOverflowMode">
@@ -1423,9 +1528,24 @@
               <append_to_list name="$diagMinerOfferWares" exact="$diagMinerSelectedWare"/>
             </do_if>
           </do_if>
-          <!-- Fallback for MiningCollect / stale snapshot states:
-               derive candidate wares from primary stations' buy offers so diagnose
-               can still evaluate miner sell opportunities even with empty cargo. -->
+          <!-- Sell-ware seeding from the player's configured resource basket on the order.
+               This is the player's intent — the wares the miner is allowed to sell — read
+               directly from $gtOrder.$resourceBasket. The diag tool intentionally does NOT
+               consult the miner's runtime snapshot here; what the AI is currently scoring
+               this attention cycle is irrelevant to "what wares can this miner deliver?".
+               Same minable + cargo-capacity gate the rest of the diagnose pipeline uses. -->
+          <do_if value="$gtOrder? and $gtOrder.$resourceBasket? and $gtOrder.$resourceBasket.count gt 0">
+            <do_all exact="$gtOrder.$resourceBasket.count" counter="$dmoRb">
+              <set_value name="$dmoRbWare" exact="$gtOrder.$resourceBasket.{$dmoRb}"/>
+              <do_if value="$dmoRbWare? and $dmoRbWare.hastag.minable and $ship.cargo.{$dmoRbWare}.max gt 0 and not $diagMinerOfferWares.indexof.{$dmoRbWare}">
+                <append_to_list name="$diagMinerOfferWares" exact="$dmoRbWare"/>
+              </do_if>
+            </do_all>
+          </do_if>
+          <!-- Fallback for empty-basket / unconfigured states: derive candidate wares from
+               the player's own primary stations' buy offers so diagnose can still evaluate
+               miner sell opportunities. Reads from $diagMinerPrimaryStations (already built
+               above from $gtOrder.$stationList + $gtOrder.$homeStation, no snapshot involved). -->
           <do_if value="$diagMinerOfferWares.count == 0 and $diagMinerPrimaryStations.count gt 0">
             <do_all exact="$diagMinerPrimaryStations.count" counter="$dpswi">
               <set_value name="$diagPrimaryStation" exact="$diagMinerPrimaryStations.{$dpswi}"/>
@@ -1542,21 +1662,22 @@
           <set_value name="$rscEffectiveRange" exact="if $rscStayAtHome then 0 else $rscMaxGather"/>
 
           <!-- Reference sector resolution.
-               The miner AI ALWAYS has a home anchor by the time it runs: order.trade.galaxyminer.xml
-               init (lines ~150-162) auto-sets $homeSector to the ship's current sector and persists it
-               via edit_order_param if neither $homeStation nor $homeSector were configured. The
-               diagnostic must therefore look at every source the miner uses, in priority order, and
-               only fall back to "current ship sector (no home anchor configured)" when the persisted
-               anchor is genuinely missing — which should only happen for a brand-new miner whose init
-               has not run yet, or in pathological savegame states.
-
-               Resolution order (matches the miner's own preference):
-                 1. $gtOrder.$homeStation       (Assist-resolved order, station handle)
-                 2. $gtOrder.$homeSector        (Assist-resolved order, sector handle)
-                 3. $ship.defaultorder.$homeStation / .$homeSector  (own defaultorder; bypasses Assist)
-                 4. $ship.order.$homeStation / .$homeSector         (currently running order)
-                 5. $ship.commander.sector      (if commander is a station, that sector IS the anchor)
-                 6. $ship.sector                (fallback: same sector the miner AI would auto-anchor to)
+               The diag tool reads only from the player-configured order params on the ship
+               (and not from any miner-published snapshot), and resolves the home anchor in
+               the same priority chain the miner's init would have written:
+                 1. $gtOrder.$homeStation       (explicit station picker, sector via .sector)
+                 2. $gtOrder.$homePosition.{1}  (sector slot of the position param; this is
+                                                 the canonical home-sector source after the
+                                                 miner's init auto-anchors a ship the user
+                                                 did not explicitly anchor — written via
+                                                 edit_order_param at order.trade.galaxyminer.xml
+                                                 lines 121-128 / 150-160, type=position so it
+                                                 IS visible from MD context)
+                 3. $gtOrder.$homeSector        (legacy/internal, may not be MD-visible)
+                 4. $ship.defaultorder.* fallbacks  (Assist-bypass)
+                 5. $ship.order.*               (currently running order)
+                 6. $ship.commander.sector      (if commander is a station, that sector IS the anchor)
+                 7. $ship.sector                (final fallback: current location)
                Stations carry no .sector by themselves in some hierarchies, so we always read
                .sector with a guard before using it as the reference. -->
           <set_value name="$rscRefSector" exact="null"/>
@@ -1568,6 +1689,11 @@
             <set_value name="$rscRefIsHome" exact="true"/>
             <set_value name="$rscRefSourceLabel" exact="' (home base: ' + (if $gtOrder.$homeStation.knownname? then @$gtOrder.$homeStation.knownname else 'station') + ')'"/>
           </do_if>
+          <do_if value="not $rscRefIsHome and $gtOrder? and $gtOrder.$homePosition? and $gtOrder.$homePosition.{1}? and $gtOrder.$homePosition.{1}.exists and $gtOrder.$homePosition.{1}.isclass.sector">
+            <set_value name="$rscRefSector" exact="$gtOrder.$homePosition.{1}"/>
+            <set_value name="$rscRefIsHome" exact="true"/>
+            <set_value name="$rscRefSourceLabel" exact="' (home sector)'"/>
+          </do_if>
           <do_if value="not $rscRefIsHome and $gtOrder? and $gtOrder.$homeSector? and $gtOrder.$homeSector.exists">
             <set_value name="$rscRefSector" exact="$gtOrder.$homeSector"/>
             <set_value name="$rscRefIsHome" exact="true"/>
@@ -1577,6 +1703,11 @@
             <set_value name="$rscRefSector" exact="@$ship.defaultorder.$homeStation.sector"/>
             <set_value name="$rscRefIsHome" exact="true"/>
             <set_value name="$rscRefSourceLabel" exact="' (home base: ' + (if $ship.defaultorder.$homeStation.knownname? then @$ship.defaultorder.$homeStation.knownname else 'station') + ')'"/>
+          </do_if>
+          <do_if value="not $rscRefIsHome and $ship.defaultorder? and $ship.defaultorder.$homePosition? and $ship.defaultorder.$homePosition.{1}? and $ship.defaultorder.$homePosition.{1}.exists and $ship.defaultorder.$homePosition.{1}.isclass.sector">
+            <set_value name="$rscRefSector" exact="$ship.defaultorder.$homePosition.{1}"/>
+            <set_value name="$rscRefIsHome" exact="true"/>
+            <set_value name="$rscRefSourceLabel" exact="' (home sector)'"/>
           </do_if>
           <do_if value="not $rscRefIsHome and $ship.defaultorder? and $ship.defaultorder.$homeSector? and $ship.defaultorder.$homeSector.exists">
             <set_value name="$rscRefSector" exact="$ship.defaultorder.$homeSector"/>
@@ -1679,23 +1810,51 @@
           </do_all>
 
           <!-- Step 3: candidate wares — same gating the miner uses (hastag.minable +
-               solid/liquid waretransport + cargo capacity). Three-level fallback chain
-               mirrors order.trade.galaxyminer.xml:493-559:
-                 1) ship.warebasket.list      (the player-configured basket)
-                 2) ship.cargo.list           (fallback for ships without an explicit basket
+               solid/liquid waretransport + cargo capacity). Five-level fallback chain reads
+               only from the player's configured order params and the ship's own cargo state;
+               the diag tool intentionally does NOT consult the miner's runtime snapshot here.
+                 1) $gtOrder.$resourceBasket  (the player-configured ware basket on the order;
+                                              this is THE intent — what the player told the
+                                              miner to bring back. Preferred over the ship
+                                              warebasket because the order param can override
+                                              it via the input_param default-binding.)
+                 2) ship.warebasket.list      (fallback when the order param was emptied or
+                                              never resolved; mirrors the order's default
+                                              binding `default="this.ship.warebasket.list"`.)
+                 3) ship.cargo.list           (fallback for ships without an explicit basket
                                               that already carry minable wares)
-                 3) $diagMinerOfferWares      (computed earlier in section 3 from the miner's
-                                              own derivation chain: $diagMinerSelectedWare +
-                                              primary-station buy offers + cargo). This is the
-                                              same pool the miner itself would score, so when
-                                              the ship is empty AND has no basket the diagnose
-                                              still surfaces every minable ware the miner would
-                                              actually consider.
+                 4) $diagMinerOfferWares      (computed earlier in section 3 from $diagMinerSelectedWare
+                                              + $gtOrder.$resourceBasket + primary-station buy offers
+                                              + cargo). When the basket is empty AND the cargo is
+                                              empty, this surfaces every minable ware the miner's
+                                              own primary stations actually buy.
+                 5) sector.resources union    (final tier — when the basket is empty, the miner
+                                              treats *every* minable ware the ship can carry as a
+                                              valid candidate. We mirror that intent here by
+                                              walking $rscKeptSectors (the safe sectors already
+                                              passing the player's gather range / hostility / scan
+                                              filters) and unioning each sector's .resources.list,
+                                              filtered down to minable + solid|liquid wares the
+                                              ship physically has cargo capacity for. This uses
+                                              the same vanilla enumeration pattern as
+                                              order.move.recon.xml:616 (sector.resources.list).
+                                              It is data-driven so DLC / mod-added minable wares
+                                              get picked up automatically and we never need to
+                                              hardcode the vanilla 7-ware set.)
                Reports which source produced the list so the user can see why a ware is or
                isn't in the candidate set. -->
           <set_value name="$rscCandWares" exact="[]"/>
           <set_value name="$rscWareSource" exact="'none'"/>
-          <do_if value="$ship.warebasket? and $ship.warebasket.list? and $ship.warebasket.list.count gt 0">
+          <do_if value="$gtOrder? and $gtOrder.$resourceBasket? and $gtOrder.$resourceBasket.count gt 0">
+            <set_value name="$rscWareSource" exact="'order resource basket'"/>
+            <do_all exact="$gtOrder.$resourceBasket.count" counter="$rwiOrd">
+              <set_value name="$rscWOrd" exact="$gtOrder.$resourceBasket.{$rwiOrd}"/>
+              <do_if value="$rscWOrd? and $rscWOrd.hastag.minable and ($rscWOrd.waretransport == waretransport.solid or $rscWOrd.waretransport == waretransport.liquid) and $ship.cargo.{$rscWOrd}.max gt 0 and not $rscCandWares.indexof.{$rscWOrd}">
+                <append_to_list name="$rscCandWares" exact="$rscWOrd"/>
+              </do_if>
+            </do_all>
+          </do_if>
+          <do_if value="$rscCandWares.count == 0 and $ship.warebasket? and $ship.warebasket.list? and $ship.warebasket.list.count gt 0">
             <set_value name="$rscWareSource" exact="'ship ware basket'"/>
             <do_all exact="$ship.warebasket.list.count" counter="$rwi">
               <set_value name="$rscW" exact="$ship.warebasket.list.{$rwi}"/>
@@ -1722,6 +1881,24 @@
               </do_if>
             </do_all>
           </do_if>
+          <!-- Tier 5: empty-basket = "every minable ware is allowed" (per design intent).
+               Walk the kept sectors and union sector.resources.list (vanilla pattern, see
+               aiscripts/order.move.recon.xml:616). Filter to minable + transport-compatible +
+               ship-can-carry. Skips entries already added by earlier tiers. -->
+          <do_if value="$rscCandWares.count == 0 and $rscKeptSectors? and $rscKeptSectors.count gt 0">
+            <set_value name="$rscWareSource" exact="'all minable wares in range (empty basket = all)'"/>
+            <do_all exact="$rscKeptSectors.count" counter="$rwiSec">
+              <set_value name="$rscSecForWares" exact="$rscKeptSectors.{$rwiSec}"/>
+              <do_if value="$rscSecForWares? and $rscSecForWares.exists and $rscSecForWares.isclass.sector and $rscSecForWares.resources.list?">
+                <do_all exact="$rscSecForWares.resources.list.count" counter="$rwiSecW">
+                  <set_value name="$rscW4" exact="$rscSecForWares.resources.list.{$rwiSecW}"/>
+                  <do_if value="$rscW4? and $rscW4.hastag.minable and ($rscW4.waretransport == waretransport.solid or $rscW4.waretransport == waretransport.liquid) and $ship.cargo.{$rscW4}.max gt 0 and not $rscCandWares.indexof.{$rscW4}">
+                    <append_to_list name="$rscCandWares" exact="$rscW4"/>
+                  </do_if>
+                </do_all>
+              </do_if>
+            </do_all>
+          </do_if>
 
           <!-- Active mining ware (from miner snapshot) — pure overlay marker only. -->
           <set_value name="$rscActiveWare" exact="null"/>
@@ -1731,41 +1908,121 @@
 
           <!-- Step 4: per-ware reachability + best-yield scan across $rscKeptSectors.
                v8 compat: sector.yieldrating.{ware} (0..15 rating) is v9-only. v8 exposes per-ware yield
-               amount via sector.averagemaxyield.{ware}.count (raw amount). The "best yield" column now
-               shows raw amount instead of a 0..15 rating, and the reachability gate degrades to a
-               positive-amount check, which combined with sector.resources.{ware}.exists matches the
-               miner's reachability decision in v8. -->
+               amount via sector.averagemaxyield.{ware}.count (raw amount). The "best yield" column shows
+               raw amount instead of a 0..15 rating.
+               Reachability matches vanilla order.mining.routine.xml:1164 + the miner AI fix at
+               order.trade.galaxyminer.xml ~716-728: sector.resources.{ware}.exists is the canonical
+               eligibility predicate. averagemaxyield.{ware}.count is consulted only as a "best yield"
+               score signal (0 / absent legitimately occurs for sparse fields, undiscovered sectors,
+               unsurveyed clusters); using it as a hard gate caused the diagnostic to under-report
+               reachable wares whenever the miner could in fact mine them. $rscMinYield is preserved
+               as a no-op blackboard value for the "Minimum Yield Rating" header row but no longer
+               filters wares out. -->
           <set_value name="$rscMinYield" exact="1"/>
           <set_value name="$rscWareRows" exact="[]"/>
           <set_value name="$rscReachableCount" exact="0"/>
+          <set_value name="$rscIsPlayerShip" exact="if $ship? and $ship.exists then $ship.isplayerowned else true"/>
+          <set_value name="$rscUndiscoveredCount" exact="0"/>
           <do_all exact="$rscCandWares.count" counter="$rci">
             <set_value name="$rscWare" exact="$rscCandWares.{$rci}"/>
             <set_value name="$rscBestYield" exact="0"/>
             <set_value name="$rscBestSecName" exact="''"/>
             <set_value name="$rscWareSectorCount" exact="0"/>
+            <!-- Per-ware undiscovered tracking. A sector is "undiscovered for this ware" when stage
+                 1 passes (`$sector.resources.{ware}.exists`, so vanilla NPC mining would find it)
+                 but stage 2 fails for player ships (`find_closest_resource useundiscovered="false"`
+                 returns null because the player has never personally surveyed an asteroid for that
+                 ware in that sector). For NPC ships these counters stay 0 because their runtime
+                 mining call uses `useundiscovered="true"` so stage-1 pass IS reachability — the
+                 distinction is meaningless for them. -->
+            <set_value name="$rscWareUndiscoveredSectorCount" exact="0"/>
+            <set_value name="$rscFirstUndiscoveredSec" exact="''"/>
             <do_all exact="$rscKeptSectors.count" counter="$rsj">
               <set_value name="$rscSecEval" exact="$rscKeptSectors.{$rsj}"/>
-              <set_value name="$rscSecYield" exact="-1"/>
-              <do_if value="$rscSecEval? and $rscSecEval.exists and $rscSecEval.isclass.sector and $rscSecEval.averagemaxyield.{$rscWare}?">
-                <set_value name="$rscSecYield" exact="@$rscSecEval.averagemaxyield.{$rscWare}.count"/>
-              </do_if>
-              <do_if value="$rscSecYield ge $rscMinYield and $rscSecEval.resources.{$rscWare}.exists">
-                <set_value name="$rscWareSectorCount" exact="$rscWareSectorCount + 1"/>
-                <do_if value="$rscSecYield gt $rscBestYield">
-                  <set_value name="$rscBestYield" exact="$rscSecYield"/>
-                  <set_value name="$rscBestSecName" exact="if $rscSecEval.knownname? then @$rscSecEval.knownname else 'unknown'"/>
+              <do_if value="$rscSecEval? and $rscSecEval.exists and $rscSecEval.isclass.sector and $rscSecEval.resources.{$rscWare}.exists">
+                <!-- Read averagemaxyield exactly like vanilla order.mining.routine.xml:999 / :1139
+                     (`$space.averagemaxyield.{$evalware}.count`). Use `@` to suppress the property
+                     lookup error when the sector genuinely has no asteroid-field entry for the ware
+                     (returns null), then coerce null -> 0 via the `if ... != null then ... else 0`
+                     pattern. The previous `if averagemaxyield.{ware}? then @...count else 0` form
+                     was unreliable: in MD context the existence-check arm returned true for a
+                     structurally-present-but-empty entry, then the `@...count` read returned null
+                     and the downstream `gt $rscBestYield` comparison was false, so the "best in"
+                     sector name was never recorded for wares whose averagemaxyield was 0 even
+                     when find_closest_resource confirmed the ware was reachable. -->
+                <set_value name="$rscSecYieldRaw" exact="@$rscSecEval.averagemaxyield.{$rscWare}.count"/>
+                <set_value name="$rscSecYield" exact="if $rscSecYieldRaw? and $rscSecYieldRaw != null then $rscSecYieldRaw else 0"/>
+                <!-- Stage 2 (player ships only): probe with find_closest_resource useundiscovered="false"
+                     so the diagnostic reports the same reachability the miner AI will see at runtime.
+                     Sectors whose .resources entry lists the ware but whose asteroids the player has
+                     never discovered would otherwise be reported reachable here while the miner stalls
+                     on FAIL_NO_RESOURCE. NPC ships keep useundiscovered=true semantics in the actual
+                     mining call, so .exists alone is sufficient for them. -->
+                <set_value name="$rscSecHasFindable" exact="not $rscIsPlayerShip"/>
+                <do_if value="$rscIsPlayerShip">
+                  <find_closest_resource sector="$rscProbeSector" position="$rscProbePos" wares="$rscProbeSecWares" ware="$rscWare" refobject="$rscSecEval" minamount="1" useundiscovered="false">
+                    <refposition value="$rscSecEval.coreposition" object="$rscSecEval" max="$rscSecEval.coresize / 4m"/>
+                  </find_closest_resource>
+                  <set_value name="$rscSecHasFindable" exact="@$rscProbeSector.exists"/>
+                  <do_if value="$rscProbeSector?">
+                    <remove_value name="$rscProbeSector"/>
+                  </do_if>
+                  <do_if value="$rscProbePos?">
+                    <remove_value name="$rscProbePos"/>
+                  </do_if>
+                  <do_if value="$rscProbeSecWares?">
+                    <remove_value name="$rscProbeSecWares"/>
+                  </do_if>
+                  <!-- Stage-1-pass-but-stage-2-fail for player ships = "available but undiscovered".
+                       Track the first such sector so the player gets an actionable hint about
+                       where to deploy a resource probe / fly through to discover the field. -->
+                  <do_if value="not $rscSecHasFindable">
+                    <set_value name="$rscWareUndiscoveredSectorCount" exact="$rscWareUndiscoveredSectorCount + 1"/>
+                    <do_if value="$rscFirstUndiscoveredSec == ''">
+                      <set_value name="$rscFirstUndiscoveredSec" exact="if $rscSecEval.knownname? then @$rscSecEval.knownname else 'unknown'"/>
+                    </do_if>
+                  </do_if>
+                </do_if>
+                <do_if value="$rscSecHasFindable">
+                  <set_value name="$rscWareSectorCount" exact="$rscWareSectorCount + 1"/>
+                  <!-- "Best in" sector tracking. Two-arm rule so the column always populates when
+                       the ware is reachable somewhere:
+                         (a) first findable sector unconditionally seeds $rscBestSecName + $rscBestYield
+                             (so a 0-yield-but-reachable ware like Ice in a freshly-loaded sector
+                             still shows the sector name instead of an empty cell);
+                         (b) any subsequent sector with a strictly higher yield upgrades both fields.
+                       Reachability is the source of truth (matches vanilla mining), yield is a
+                       ranking signal only — the sector name should never be hidden just because the
+                       yield amount happens to be 0 in this MD-context read of the property. -->
+                  <do_if value="$rscBestSecName == '' or $rscSecYield gt $rscBestYield">
+                    <set_value name="$rscBestYield" exact="$rscSecYield"/>
+                    <set_value name="$rscBestSecName" exact="if $rscSecEval.knownname? then @$rscSecEval.knownname else 'unknown'"/>
+                  </do_if>
+                </do_if>
+                <do_if value="$rscSecYieldRaw?">
+                  <remove_value name="$rscSecYieldRaw"/>
                 </do_if>
               </do_if>
             </do_all>
             <set_value name="$rscReachable" exact="$rscWareSectorCount gt 0"/>
+            <!-- A ware is "undiscovered" (player only) when no kept sector has discovered asteroids
+                 for it BUT at least one kept sector lists it as a resource — the miner can't mine
+                 it today, but a single resource probe (or a fly-through) would unlock it. -->
+            <set_value name="$rscUndiscovered" exact="(not $rscReachable) and $rscWareUndiscoveredSectorCount gt 0"/>
             <do_if value="$rscReachable">
               <set_value name="$rscReachableCount" exact="$rscReachableCount + 1"/>
+            </do_if>
+            <do_if value="$rscUndiscovered">
+              <set_value name="$rscUndiscoveredCount" exact="$rscUndiscoveredCount + 1"/>
             </do_if>
             <set_value name="$rscIsActive" exact="$rscActiveWare? and $rscActiveWare != null and $rscActiveWare == $rscWare"/>
             <append_to_list name="$rscWareRows" exact="table[
               $WareName = if $rscWare.name? then $rscWare.name else '?',
               $IsActive = $rscIsActive,
               $Reachable = $rscReachable,
+              $Undiscovered = $rscUndiscovered,
+              $UndiscoveredSectorCount = $rscWareUndiscoveredSectorCount,
+              $UndiscoveredFirstSector = $rscFirstUndiscoveredSec,
               $BestYield = $rscBestYield,
               $SectorCount = $rscWareSectorCount,
               $BestSector = $rscBestSecName
@@ -1806,9 +2063,17 @@
             <set_value name="$rscKeptNamesText" exact="$rscKeptNamesText + ' (+' + ($rscKeptSectors.count - $rscNamesCap) + ' more)'"/>
           </do_if>
           <append_to_list name="$sec3b.$Rows" exact="table[$Check = 'Safe Sector Names', $Status = 'INFO', $Detail = $rscKeptNamesText]"/>
-          <append_to_list name="$sec3b.$Rows" exact="table[$Check = 'Minimum Yield Rating', $Status = 'INFO', $Detail = '' + $rscMinYield + ' (sectors with a lower rating are ignored)']"/>
+          <append_to_list name="$sec3b.$Rows" exact="table[$Check = 'Yield Display', $Status = 'INFO', $Detail = 'Best-yield amount per ware is shown for ranking only; reachability is decided by whether the sector contains the resource (matches vanilla mining behaviour).']"/>
           <append_to_list name="$sec3b.$Rows" exact="table[$Check = 'Candidate Wares', $Status = if $rscCandWares.count gt 0 then 'PASS' else 'WARN', $Detail = '' + $rscCandWares.count + ' minable wares (taken from: ' + $rscWareSource + ')']"/>
           <append_to_list name="$sec3b.$Rows" exact="table[$Check = 'Reachable Wares', $Status = if $rscReachableCount gt 0 then 'PASS' else 'FAIL', $Detail = '' + $rscReachableCount + ' of ' + $rscCandWares.count + ' wares can be mined in a safe sector in range']"/>
+          <!-- Undiscovered wares header — only meaningful for player ships (NPCs use
+               useundiscovered=true at runtime). When the count is >0, surface it as INFO
+               (actionable, not a failure): the player can deploy a resource probe in the listed
+               sector or fly through to discover the field, after which the ware will move to
+               the "Reachable" tier on the next diag run. Suppressed for NPC ships. -->
+          <do_if value="$rscIsPlayerShip">
+            <append_to_list name="$sec3b.$Rows" exact="table[$Check = 'Undiscovered Wares', $Status = if $rscUndiscoveredCount gt 0 then 'INFO' else 'PASS', $Detail = if $rscUndiscoveredCount gt 0 then ('' + $rscUndiscoveredCount + ' of ' + $rscCandWares.count + ' wares are present in a safe sector but you have not discovered the asteroid field yet — deploy a resource probe or fly through to discover') else 'none (all candidate wares either reachable or absent from your gather range)']"/>
+          </do_if>
 
           <!-- Step 6: render top-N rows sorted by best yield desc (reachable first, unreachable last).
                X4 MD has no insert_in_list, so use the same selection-sort pattern as elsewhere in
@@ -1831,8 +2096,13 @@
               <do_all exact="$rscWareRows.count" counter="$rsk">
                 <do_if value="not $rscClaimed.{$rsk}">
                   <set_value name="$rscRow" exact="$rscWareRows.{$rsk}"/>
-                  <!-- Sort key: reachable wares ranked by yield (>=0); unreachable wares grouped at -1. -->
-                  <set_value name="$rscKey" exact="if $rscRow.$Reachable then $rscRow.$BestYield else -1"/>
+                  <!-- Sort key:
+                         reachable wares      -> yield (>=0), grouped at the top
+                         undiscovered wares   -> -1, grouped after all reachables
+                         fully unreachable    -> -2, grouped at the bottom
+                       Within a group, ties are broken by source-list order (selection sort
+                       picks the first match on equal keys). -->
+                  <set_value name="$rscKey" exact="if $rscRow.$Reachable then $rscRow.$BestYield else (if $rscRow.$Undiscovered then -1 else -2)"/>
                   <do_if value="$rscKey gt $rscBestVal">
                     <set_value name="$rscBestVal" exact="$rscKey"/>
                     <set_value name="$rscBestIdx" exact="$rsk"/>
@@ -1846,12 +2116,17 @@
             </do_all>
             <do_all exact="$rscSorted.count" counter="$rro">
               <set_value name="$rscOut" exact="$rscSorted.{$rro}"/>
-              <set_value name="$rscWStatus" exact="if $rscOut.$Reachable then (if $rscOut.$IsActive then 'PASS' else 'INFO') else 'WARN'"/>
+              <!-- Three-state status:
+                     reachable + active         -> PASS  (currently being mined)
+                     reachable                  -> INFO  (mineable now)
+                     undiscovered (player only) -> INFO  (one probe / fly-through away — actionable, not a failure)
+                     unreachable                -> WARN  (sector doesn't list the ware in range) -->
+              <set_value name="$rscWStatus" exact="if $rscOut.$Reachable then (if $rscOut.$IsActive then 'PASS' else 'INFO') else (if $rscOut.$Undiscovered then 'INFO' else 'WARN')"/>
               <set_value name="$rscWLabel" exact="if $rscOut.$IsActive then '* ' + $rscOut.$WareName else $rscOut.$WareName"/>
-              <set_value name="$rscWReach" exact="if $rscOut.$Reachable then 'yes' else 'no'"/>
+              <set_value name="$rscWReach" exact="if $rscOut.$Reachable then 'yes' else (if $rscOut.$Undiscovered then 'undiscovered' else 'no')"/>
               <set_value name="$rscWBest" exact="if $rscOut.$Reachable then '' + $rscOut.$BestYield else '-'"/>
-              <set_value name="$rscWCount" exact="'' + $rscOut.$SectorCount"/>
-              <set_value name="$rscWNote" exact="if $rscOut.$Reachable then 'best in: ' + $rscOut.$BestSector else 'no safe sector in range has yield >= ' + $rscMinYield"/>
+              <set_value name="$rscWCount" exact="if $rscOut.$Reachable then '' + $rscOut.$SectorCount else (if $rscOut.$Undiscovered then '' + $rscOut.$UndiscoveredSectorCount else '0')"/>
+              <set_value name="$rscWNote" exact="if $rscOut.$Reachable then ('best in: ' + $rscOut.$BestSector) else (if $rscOut.$Undiscovered then ('available in ' + (if $rscOut.$UndiscoveredSectorCount gt 1 then ('' + $rscOut.$UndiscoveredSectorCount + ' sectors (e.g. ' + $rscOut.$UndiscoveredFirstSector + ')') else $rscOut.$UndiscoveredFirstSector) + ' — deploy a resource probe to discover the field') else (if $rscIsPlayerShip then 'no safe sector in range has discovered asteroids for this resource (deploy a resource probe or fly through the field to discover)' else 'no safe sector in range contains this resource'))"/>
               <append_to_list name="$sec3b.$Rows" exact="table[
                 $Status = $rscWStatus,
                 $Check = $rscWLabel,
