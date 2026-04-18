@@ -737,5 +737,7 @@
     <t id="30026">Regreso a casa entre ciclos</t>
     <t id="30126">Cuando esté habilitado, regrese a la estación base y atraque entre ciclos comerciales. Cuando está deshabilitado, continúa buscando desde la ubicación actual (comportamiento heredado)</t>
     <t id="3107">Cola de operaciones múltiples: %1. Debería obtener %2 de ganancias.</t>
+    <t id="31029">Sondas de recursos máximas para comprar</t>
+    <t id="31129">Cuántas sondas de recursos comprar cuando se agote el barco (compra automática mediante reabastecimiento). 0 desactiva la compra. Cap es la capacidad desplegable del barco. El reabastecimiento solo se activa cuando el stock de la sonda llega a cero, no después de cada despliegue. Las sondas obsoletas en sectores agotados se recopilan automáticamente para su reimplementación cuando la opción "Implementación automática de sondas de recursos" está activada.</t>
   </page>
 </language>

@@ -737,5 +737,7 @@
     <t id="30026">Döngüler Arasında Eve Dönüş</t>
     <t id="30126">Etkinleştirildiğinde, ana istasyona dönün ve ticaret döngüleri arasında yanaşın. Devre dışı bırakıldığında, mevcut konumdan aramaya devam edin (eski davranış)</t>
     <t id="3107">Çoklu ticaret sıraya alınıyor: %1. %2 kar elde etmeliyim.</t>
+    <t id="31029">Satın Alınacak Maksimum Kaynak Araştırmaları</t>
+    <t id="31129">Gemi bittiğinde kaç tane kaynak sondası satın alınacağı (ikmal yoluyla otomatik satın alma). 0 satın almayı devre dışı bırakır. Cap, geminin konuşlandırılabilir kapasitesidir. Yeniden stoklama, her dağıtımdan sonra değil, yalnızca prob stoğu sıfıra ulaştığında tetiklenir. 'Kaynak Araştırmalarını Otomatik Olarak Dağıt' seçeneği açık olduğunda, tükenen sektörlerdeki eski araştırmalar yeniden konuşlandırılmak üzere otomatik olarak toplanır.</t>
   </page>
 </language>

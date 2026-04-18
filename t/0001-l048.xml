@@ -737,5 +737,7 @@
     <t id="30026">Powrót do domu pomiędzy cyklami</t>
     <t id="30126">Po włączeniu wróć do stacji domowej i dokuj pomiędzy cyklami handlowymi. Gdy wyłączone, kontynuuj wyszukiwanie z bieżącej lokalizacji (starsze zachowanie)</t>
     <t id="3107">W kolejce multitrade: %1. Powinienem zarobić %2 zysku.</t>
+    <t id="31029">Maksymalna liczba sond zasobów do kupienia</t>
+    <t id="31129">Ile sond zasobów należy kupić, gdy statek się wyczerpie (automatyczny zakup poprzez uzupełnienie zapasów). 0 wyłącza kupowanie. Cap to możliwa do rozmieszczenia pojemność statku. Uzupełnianie zapasów jest uruchamiane tylko wtedy, gdy zapas sond osiągnie zero, a nie po każdym rozmieszczeniu. Przestarzałe sondy w wyczerpanych sektorach są automatycznie zbierane w celu ponownego rozmieszczenia, gdy włączona jest opcja „Automatyczne rozmieszczanie sond zasobów”.</t>
   </page>
 </language>

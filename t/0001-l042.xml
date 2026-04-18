@@ -737,5 +737,7 @@
     <t id="30026">Návrat domů mezi cykly</t>
     <t id="30126">Je-li povoleno, vraťte se do domovské stanice a doku mezi obchodními cykly. Když je zakázáno, pokračovat ve vyhledávání z aktuální polohy (starší chování)</t>
     <t id="3107">Zařazení do fronty pro více obchodů: %1. Měl bych vydělat %2 zisku.</t>
+    <t id="31029">Max Resource Sondy k nákupu</t>
+    <t id="31129">Kolik sond zdrojů koupit, když dojde loď (automatický nákup prostřednictvím doplnění). 0 deaktivuje nákup. Cap je kapacita lodi. Doplnění zásob se spustí pouze tehdy, když zásoba sondy dosáhne nuly, nikoli po každém nasazení. Zastaralé sondy ve vyčerpaných sektorech jsou automaticky shromažďovány pro opětovné nasazení, když je zapnuto „Automatické nasazení sond zdrojů“.</t>
   </page>
 </language>

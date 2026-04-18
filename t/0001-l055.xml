@@ -737,5 +737,7 @@
     <t id="30026">Voltar para casa entre os ciclos</t>
     <t id="30126">Quando ativado, retorna à estação inicial e atraca entre os ciclos comerciais. Quando desativado, continue pesquisando a partir do local atual (comportamento legado)</t>
     <t id="3107">Enfileirando multitrade: %1. Eu deveria ganhar %2 de lucro.</t>
+    <t id="31029">Sondas de recursos máximos para comprar</t>
+    <t id="31129">Quantas sondas de recursos comprar quando o navio acabar (compra automática via reabastecimento). 0 desativa a compra. Cap é a capacidade implantável do navio. O reabastecimento só é acionado quando o estoque de sondas chega a zero, e não após cada implantação. As sondagens obsoletas em setores esgotados são coletadas automaticamente para reimplantação quando 'Implantar automaticamente sondagens de recursos' está ativado.</t>
   </page>
 </language>

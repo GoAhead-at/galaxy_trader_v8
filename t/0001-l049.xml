@@ -737,5 +737,7 @@
     <t id="10106">Docken Sie an der Heimatstation an und bleiben Sie dort, bis der Handel wieder aufgenommen wird</t>
     <t id="30026">Rückkehr nach Hause zwischen den Zyklen</t>
     <t id="30126">Wenn aktiviert, kehren Sie zwischen den Handelszyklen zur Heimatstation zurück und andocken Sie an. Wenn deaktiviert, setzen Sie die Suche vom aktuellen Standort aus fort (altes Verhalten).</t>
+    <t id="31029">Maximal zu kaufende Ressourcensonden</t>
+    <t id="31129">Wie viele Ressourcensonden müssen gekauft werden, wenn das Schiff leer ist (automatischer Kauf über Nachschub). 0 deaktiviert den Kauf. Cap ist die einsetzbare Kapazität des Schiffes. Die Wiederauffüllung wird nur ausgelöst, wenn der Sondenbestand Null erreicht, nicht nach jeder Bereitstellung. Veraltete Sonden in erschöpften Sektoren werden automatisch zur erneuten Bereitstellung gesammelt, wenn „Ressourcenproben automatisch bereitstellen“ aktiviert ist.</t>
   </page>
 </language>

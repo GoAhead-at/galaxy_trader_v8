@@ -737,5 +737,7 @@
     <t id="30026">Ritorno a casa tra un ciclo e l'altro</t>
     <t id="30126">Quando abilitato, torna alla stazione di partenza e attracca tra i cicli commerciali. Quando disabilitato, continua la ricerca dalla posizione corrente (comportamento legacy)</t>
     <t id="3107">Multitrade in coda: %1. Dovrei guadagnare %2 di profitto.</t>
+    <t id="31029">Numero massimo di sonde di risorse da acquistare</t>
+    <t id="31129">Quante sonde di risorse acquistare quando la nave si esaurisce (acquisto automatico tramite rifornimento). 0 disabilita l'acquisto. Il limite è la capacità dispiegabile della nave. Il rifornimento viene attivato solo quando lo stock della sonda raggiunge lo zero, non dopo ogni distribuzione. Le sonde obsolete nei settori esauriti vengono raccolte automaticamente per la ridistribuzione quando l'opzione "Distribuzione automatica sonde risorse" è attiva.</t>
   </page>
 </language>
