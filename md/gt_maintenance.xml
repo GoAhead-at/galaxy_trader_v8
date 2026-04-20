@@ -179,6 +179,30 @@
         <set_value name="$needsCountermeasures" exact="false"/>
         <set_value name="$needsUnits" exact="false"/>
         <set_value name="$needsResourceProbes" exact="$shipIsGalaxyMiner and $autoDeployResourceProbes and $currentResourceProbes lt 1"/>
+        <!-- ============================================================================ -->
+        <!-- Collector-drone shortage detection (capital miners only). Detection mirrors  -->
+        <!-- vanilla order.mining.routine.xml (waretransport.solid + 0 orecollector or    -->
+        <!-- waretransport.liquid + 0 gascollector). Macros are vanilla canonical from    -->
+        <!-- libraries/loadoutrules.xml. Target = 5, capped at units.maxcount.            -->
+        <!-- ============================================================================ -->
+        <set_value name="$needsCollectorDrones" exact="false"/>
+        <set_value name="$collectorMacro" exact="null"/>
+        <set_value name="$collectorMacroLabel" exact="''"/>
+        <set_value name="$collectorTargetCount" exact="0"/>
+        <do_if value="$ship.iscapitalship">
+          <do_if value="$ship.waretransport.indexof.{waretransport.solid} and not $ship.units.{unitcategory.orecollector}.count">
+            <set_value name="$needsCollectorDrones" exact="true"/>
+            <set_value name="$collectorMacro" exact="macro.ship_gen_s_miningdrone_solid_01_a_macro"/>
+            <set_value name="$collectorMacroLabel" exact="'orecollector'"/>
+            <set_value name="$collectorTargetCount" exact="[5, $ship.units.maxcount].min"/>
+          </do_if>
+          <do_elseif value="$ship.waretransport.indexof.{waretransport.liquid} and not $ship.units.{unitcategory.gascollector}.count">
+            <set_value name="$needsCollectorDrones" exact="true"/>
+            <set_value name="$collectorMacro" exact="macro.ship_gen_s_miningdrone_liquid_01_a_macro"/>
+            <set_value name="$collectorMacroLabel" exact="'gascollector'"/>
+            <set_value name="$collectorTargetCount" exact="[5, $ship.units.maxcount].min"/>
+          </do_elseif>
+        </do_if>
         
         <do_if value="$pilotLevel ge 15 and @global.$GT_Config.$Defense.$Enabled and @global.$GT_GlobalSettings.$DefensiveEquipment.$Enabled">
           <!-- Check countermeasures and deployables -->
@@ -222,14 +246,32 @@
              defensive equipment (CM + drones + towers). -->
         <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
           <debug_text text="'[GT-Maintenance]   Resource probes (Miner): AutoDeploy=' + $autoDeployResourceProbes + ', Current=' + $currentResourceProbes + ', Needs=' + $needsResourceProbes + ', SliderTarget=' + $maxResourceProbesToBuy" chance="100"/>
-          <debug_text text="'[GT-Maintenance]   Result: needsCountermeasures=' + $needsCountermeasures + ', needsUnits=' + $needsUnits + ', needsResourceProbes=' + $needsResourceProbes + ', needsEquipment=' + ($needsCountermeasures or $needsUnits or $needsResourceProbes)" chance="100"/>
+          <debug_text text="'[GT-Maintenance]   Collector drones (Miner): NeedsCollectors=' + $needsCollectorDrones + ', Category=' + $collectorMacroLabel + ', Target=' + $collectorTargetCount + ', UnitsMax=' + $ship.units.maxcount + ', CurrentOreCol=' + $ship.units.{unitcategory.orecollector}.count + ', CurrentGasCol=' + $ship.units.{unitcategory.gascollector}.count" chance="100"/>
+          <debug_text text="'[GT-Maintenance]   Result: needsCountermeasures=' + $needsCountermeasures + ', needsUnits=' + $needsUnits + ', needsResourceProbes=' + $needsResourceProbes + ', needsCollectorDrones=' + $needsCollectorDrones + ', needsEquipment=' + ($needsCountermeasures or $needsUnits or $needsResourceProbes or $needsCollectorDrones)" chance="100"/>
         </do_if>
         
-        <do_if value="$needsCountermeasures or $needsUnits or $needsResourceProbes">
+        <do_if value="$needsCountermeasures or $needsUnits or $needsResourceProbes or $needsCollectorDrones">
           <set_value name="$needsEquipment" exact="true"/>
-          <set_value name="$whatNeedsRestocking" exact="if $needsCountermeasures and $needsUnits and $needsResourceProbes then 'CM + units + resource probes' else if $needsCountermeasures and $needsUnits then 'CM + units' else if $needsCountermeasures and $needsResourceProbes then 'CM + resource probes' else if $needsUnits and $needsResourceProbes then 'units + resource probes' else if $needsCountermeasures then 'CM only' else if $needsUnits then 'Units only' else 'resource probes only'"/>
+          <set_value name="$restockComponents" exact="[]"/>
+          <do_if value="$needsCountermeasures">
+            <append_to_list name="$restockComponents" exact="'CM'"/>
+          </do_if>
+          <do_if value="$needsUnits">
+            <append_to_list name="$restockComponents" exact="'units'"/>
+          </do_if>
+          <do_if value="$needsResourceProbes">
+            <append_to_list name="$restockComponents" exact="'resource probes'"/>
+          </do_if>
+          <do_if value="$needsCollectorDrones">
+            <append_to_list name="$restockComponents" exact="$collectorMacroLabel + ' drones'"/>
+          </do_if>
+          <set_value name="$whatNeedsRestocking" exact="''"/>
+          <do_all exact="$restockComponents.count" counter="$_rci">
+            <set_value name="$whatNeedsRestocking" exact="$whatNeedsRestocking + (if $_rci gt 1 then ' + ' else '') + $restockComponents.{$_rci}"/>
+          </do_all>
+          <remove_value name="$restockComponents"/>
           <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
-            <debug_text text="'[GT-Maintenance] ' + $ship.idcode + ' needs equipment (ResourceProbes: ' + $currentResourceProbes + ' - will restock ' + $whatNeedsRestocking + ')'" chance="100"/>
+            <debug_text text="'[GT-Maintenance] ' + $ship.idcode + ' needs equipment (ResourceProbes: ' + $currentResourceProbes + ', CollectorTarget: ' + $collectorTargetCount + ' ' + $collectorMacroLabel + ' - will restock ' + $whatNeedsRestocking + ')'" chance="100"/>
           </do_if>
         </do_if>
         
@@ -370,6 +412,28 @@
           </do_elseif>
           <do_elseif value="$ship.defaultorder.$maxResourceProbesToBuy?">
             <set_value name="$maxResourceProbesToBuy" exact="$ship.defaultorder.$maxResourceProbesToBuy"/>
+          </do_elseif>
+        </do_if>
+        
+        <!-- Re-resolve collector-drone shortage in execution context (queue-safe).
+             Same logic as DoMaintenance lines ~178-203; can't pass through param table because
+             the queued ProcessMaintenanceQueue path drops fields not in its own append_to_list. -->
+        <set_value name="$needsCollectorDrones" exact="false"/>
+        <set_value name="$collectorMacro" exact="null"/>
+        <set_value name="$collectorMacroLabel" exact="''"/>
+        <set_value name="$collectorTargetCount" exact="0"/>
+        <do_if value="$ship.iscapitalship">
+          <do_if value="$ship.waretransport.indexof.{waretransport.solid} and not $ship.units.{unitcategory.orecollector}.count">
+            <set_value name="$needsCollectorDrones" exact="true"/>
+            <set_value name="$collectorMacro" exact="macro.ship_gen_s_miningdrone_solid_01_a_macro"/>
+            <set_value name="$collectorMacroLabel" exact="'orecollector'"/>
+            <set_value name="$collectorTargetCount" exact="[5, $ship.units.maxcount].min"/>
+          </do_if>
+          <do_elseif value="$ship.waretransport.indexof.{waretransport.liquid} and not $ship.units.{unitcategory.gascollector}.count">
+            <set_value name="$needsCollectorDrones" exact="true"/>
+            <set_value name="$collectorMacro" exact="macro.ship_gen_s_miningdrone_liquid_01_a_macro"/>
+            <set_value name="$collectorMacroLabel" exact="'gascollector'"/>
+            <set_value name="$collectorTargetCount" exact="[5, $ship.units.maxcount].min"/>
           </do_elseif>
         </do_if>
         
@@ -996,13 +1060,30 @@
               
               <!-- Check for UNITS (defense drones, laser towers, etc.) -->
               <!-- Note: We already validated cansupplyclass earlier, so station can supply this ship class -->
-              <do_if value="$needsUnits">
+              <do_if value="$needsUnits or $needsCollectorDrones">
                 <!-- For units/drones, check if station can build units (shipyard/wharf) or is equipment dock that can supply -->
                 <!-- Vanilla resupply will handle the complex unit selection -->
                 <set_value name="$hasUnitDroneStock" exact="$station.isshipyard or $station.iswharf or $station.isequipmentdock"/>
                 <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
                   <debug_text text="'[GT-Maintenance]   Units/Drones check: isShipyard=' + $station.isshipyard + ', isWharf=' + $station.iswharf + ', isEquipmentDock=' + $station.isequipmentdock + ', result=' + $hasUnitDroneStock" chance="100"/>
                 </do_if>
+              </do_if>
+              
+              <!-- Collector-drone availability check: harden the unit-stock check above when we
+                   specifically need a collector. The generic "is wharf/shipyard/equipment dock"
+                   gate isn't enough - many equipment docks don't actually stock mining drones
+                   (loadoutrules.xml only assigns mining drones to ship_l/ship_xl + purpose=mine,
+                   so smaller dockyards skip them entirely). Use canbuildequipment + hasresourcesfor
+                   on the collector ware itself, exact same pattern as the ammo check above. -->
+              <do_if value="$needsCollectorDrones and $collectorMacro != null and $hasUnitDroneStock">
+                <set_value name="$canBuildCollector" exact="$station.canbuildequipment.{[$collectorMacro.ware]}"/>
+                <set_value name="$hasCollectorResources" exact="$station.hasresourcesfor.{table[{$collectorMacro.ware} = $collectorTargetCount]}"/>
+                <set_value name="$hasUnitDroneStock" exact="$canBuildCollector and $hasCollectorResources"/>
+                <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                  <debug_text text="'[GT-Maintenance]   Collector check (' + $collectorMacroLabel + '): canBuild=' + $canBuildCollector + ', hasResources=' + $hasCollectorResources + ', result=' + $hasUnitDroneStock" chance="100"/>
+                </do_if>
+                <remove_value name="$canBuildCollector"/>
+                <remove_value name="$hasCollectorResources"/>
               </do_if>
               
               <!-- Station passes if it has stock for ALL needed categories (all must be true) -->
@@ -1407,6 +1488,70 @@
               </do_if>
             </do_else>
             
+            <!-- ============================================================================ -->
+            <!-- Miner collector-drone restock (POST-preservation phase). Preservation block   -->
+            <!-- above add_value's the ship's CURRENT defense/cargo/tower/repair counts on top -->
+            <!-- of balance-profile targets. For a fully-loaded miner the resulting $unittable -->
+            <!-- already sums to ~maxcount, and add_build_to_modify_ship truncates the new     -->
+            <!-- collector entry (last inserted) to fit. Trim non-collector categories first   -->
+            <!-- (defense -> tower -> cargo -> repair), THEN insert the collector ware.        -->
+            <!-- ============================================================================ -->
+            <do_if value="$needsCollectorDrones and $collectorMacro != null and $ship.units.maxcount gt 0">
+              <set_value name="$collectorMaxCount" exact="$ship.units.maxcount"/>
+              <set_value name="$nonCollectorTotal" exact="(@$unittable.{macro.ship_gen_s_fightingdrone_01_a_macro.ware} + @$unittable.{macro.ship_gen_xs_cargodrone_empty_01_a_macro.ware} + @$unittable.{macro.ship_gen_xs_lasertower_01_a_macro.ware} + @$unittable.{macro.ship_gen_xs_repairdrone_01_a_macro.ware})"/>
+              <set_value name="$slotsAvailableForOthers" exact="[$collectorMaxCount - $collectorTargetCount, 0].max"/>
+              <set_value name="$collectorOverflow" exact="[$nonCollectorTotal - $slotsAvailableForOthers, 0].max"/>
+              <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                <debug_text text="'[GT-Maintenance]   - Collector slot reservation: maxcount=' + $collectorMaxCount + ', collectorTarget=' + $collectorTargetCount + ', nonCollectorTotal=' + $nonCollectorTotal + ', slotsForOthers=' + $slotsAvailableForOthers + ', overflow_to_trim=' + $collectorOverflow" chance="100"/>
+              </do_if>
+              <do_if value="$collectorOverflow gt 0 and @$unittable.{macro.ship_gen_s_fightingdrone_01_a_macro.ware} gt 0">
+                <set_value name="$_trimDefense" exact="[@$unittable.{macro.ship_gen_s_fightingdrone_01_a_macro.ware}, $collectorOverflow].min"/>
+                <set_value name="$unittable.{macro.ship_gen_s_fightingdrone_01_a_macro.ware}" exact="@$unittable.{macro.ship_gen_s_fightingdrone_01_a_macro.ware} - $_trimDefense"/>
+                <set_value name="$collectorOverflow" exact="$collectorOverflow - $_trimDefense"/>
+                <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                  <debug_text text="'[GT-Maintenance]     Trimmed defense drones by ' + $_trimDefense + ' (new value=' + @$unittable.{macro.ship_gen_s_fightingdrone_01_a_macro.ware} + ', overflow remaining=' + $collectorOverflow + ')'" chance="100"/>
+                </do_if>
+                <remove_value name="$_trimDefense"/>
+              </do_if>
+              <do_if value="$collectorOverflow gt 0 and @$unittable.{macro.ship_gen_xs_lasertower_01_a_macro.ware} gt 0">
+                <set_value name="$_trimTower" exact="[@$unittable.{macro.ship_gen_xs_lasertower_01_a_macro.ware}, $collectorOverflow].min"/>
+                <set_value name="$unittable.{macro.ship_gen_xs_lasertower_01_a_macro.ware}" exact="@$unittable.{macro.ship_gen_xs_lasertower_01_a_macro.ware} - $_trimTower"/>
+                <set_value name="$collectorOverflow" exact="$collectorOverflow - $_trimTower"/>
+                <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                  <debug_text text="'[GT-Maintenance]     Trimmed laser towers by ' + $_trimTower + ' (new value=' + @$unittable.{macro.ship_gen_xs_lasertower_01_a_macro.ware} + ', overflow remaining=' + $collectorOverflow + ')'" chance="100"/>
+                </do_if>
+                <remove_value name="$_trimTower"/>
+              </do_if>
+              <do_if value="$collectorOverflow gt 0 and @$unittable.{macro.ship_gen_xs_cargodrone_empty_01_a_macro.ware} gt 0">
+                <set_value name="$_trimCargo" exact="[@$unittable.{macro.ship_gen_xs_cargodrone_empty_01_a_macro.ware}, $collectorOverflow].min"/>
+                <set_value name="$unittable.{macro.ship_gen_xs_cargodrone_empty_01_a_macro.ware}" exact="@$unittable.{macro.ship_gen_xs_cargodrone_empty_01_a_macro.ware} - $_trimCargo"/>
+                <set_value name="$collectorOverflow" exact="$collectorOverflow - $_trimCargo"/>
+                <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                  <debug_text text="'[GT-Maintenance]     Trimmed trade drones by ' + $_trimCargo + ' (new value=' + @$unittable.{macro.ship_gen_xs_cargodrone_empty_01_a_macro.ware} + ', overflow remaining=' + $collectorOverflow + ')'" chance="100"/>
+                </do_if>
+                <remove_value name="$_trimCargo"/>
+              </do_if>
+              <do_if value="$collectorOverflow gt 0 and @$unittable.{macro.ship_gen_xs_repairdrone_01_a_macro.ware} gt 0">
+                <set_value name="$_trimRepair" exact="[@$unittable.{macro.ship_gen_xs_repairdrone_01_a_macro.ware}, $collectorOverflow].min"/>
+                <set_value name="$unittable.{macro.ship_gen_xs_repairdrone_01_a_macro.ware}" exact="@$unittable.{macro.ship_gen_xs_repairdrone_01_a_macro.ware} - $_trimRepair"/>
+                <set_value name="$collectorOverflow" exact="$collectorOverflow - $_trimRepair"/>
+                <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                  <debug_text text="'[GT-Maintenance]     Trimmed repair drones by ' + $_trimRepair + ' (new value=' + @$unittable.{macro.ship_gen_xs_repairdrone_01_a_macro.ware} + ', overflow remaining=' + $collectorOverflow + ')'" chance="100"/>
+                </do_if>
+                <remove_value name="$_trimRepair"/>
+              </do_if>
+              <set_value name="$unittable.{$collectorMacro.ware}" exact="$collectorTargetCount"/>
+              <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+                <set_value name="$_finalNonCollector" exact="(@$unittable.{macro.ship_gen_s_fightingdrone_01_a_macro.ware} + @$unittable.{macro.ship_gen_xs_cargodrone_empty_01_a_macro.ware} + @$unittable.{macro.ship_gen_xs_lasertower_01_a_macro.ware} + @$unittable.{macro.ship_gen_xs_repairdrone_01_a_macro.ware})"/>
+                <debug_text text="'[GT-Maintenance]   - Inserted ' + $collectorMacro.ware + ' x' + $collectorTargetCount + ' (category=' + $collectorMacroLabel + '); final unittable: defense=' + @$unittable.{macro.ship_gen_s_fightingdrone_01_a_macro.ware} + ', cargo=' + @$unittable.{macro.ship_gen_xs_cargodrone_empty_01_a_macro.ware} + ', tower=' + @$unittable.{macro.ship_gen_xs_lasertower_01_a_macro.ware} + ', repair=' + @$unittable.{macro.ship_gen_xs_repairdrone_01_a_macro.ware} + ', collector=' + $collectorTargetCount + ', sumNonCollector=' + $_finalNonCollector + ', sumWithCollector=' + ($_finalNonCollector + $collectorTargetCount) + ', maxcount=' + $collectorMaxCount" chance="100"/>
+                <remove_value name="$_finalNonCollector"/>
+              </do_if>
+              <remove_value name="$collectorOverflow"/>
+              <remove_value name="$slotsAvailableForOthers"/>
+              <remove_value name="$nonCollectorTotal"/>
+              <remove_value name="$collectorMaxCount"/>
+            </do_if>
+            
             <!-- Store shopping list for AI script -->
             <!-- Ensure table exists before accessing (handles race condition) -->
             <do_if value="not global.$GT_ResupplyOrders?">
@@ -1448,17 +1593,34 @@
             <set_value name="$storedLaserTowersBefore" exact="if $beforeLaserTowers? and $beforeLaserTowers != null then $beforeLaserTowers else 0"/>
             <set_value name="$storedRepairDronesBefore" exact="if $beforeRepairDrones? and $beforeRepairDrones != null then $beforeRepairDrones else 0"/>
 
-            <set_value name="global.$GT_ResupplyOrders.{$ship}" exact="table[]"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$Station" exact="$equipmentStation"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$AmmoTable" exact="$ammotable"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$UnitTable" exact="$unittable"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$DeployablesBefore" exact="$storedCurrentDeployables"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$CountermeasuresBefore" exact="$storedCurrentCM"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$UnitsBefore" exact="$storedCurrentUnits"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$DefenseDronesBefore" exact="$storedDefenseDronesBefore"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$CargoDronesBefore" exact="$storedCargoDronesBefore"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$LaserTowersBefore" exact="$storedLaserTowersBefore"/>
-            <set_value name="global.$GT_ResupplyOrders.{$ship}.$RepairDronesBefore" exact="$storedRepairDronesBefore"/>
+            <!-- Chained-property set_value of table-typed values against a just-created global
+                 entry does not reliably persist across cue boundaries in this X4 build (scalars
+                 and connection-typed values persist; tables silently read back as null on the
+                 consumer side). Assigning the entire entry as a single inline table literal is
+                 the only form that reliably persists nested tables. Pre-coalesce every value
+                 above so no key construction can short-circuit on null. -->
+            <set_value name="global.$GT_ResupplyOrders.{$ship}" exact="table[
+              $Station = $equipmentStation,
+              $AmmoTable = $ammotable,
+              $UnitTable = $unittable,
+              $DeployablesBefore = $storedCurrentDeployables,
+              $CountermeasuresBefore = $storedCurrentCM,
+              $UnitsBefore = $storedCurrentUnits,
+              $DefenseDronesBefore = $storedDefenseDronesBefore,
+              $CargoDronesBefore = $storedCargoDronesBefore,
+              $LaserTowersBefore = $storedLaserTowersBefore,
+              $RepairDronesBefore = $storedRepairDronesBefore
+            ]"/>
+
+            <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+              <set_value name="$verifyEntry" exact="@global.$GT_ResupplyOrders.{$ship}"/>
+              <set_value name="$verifyAmmoCount" exact="if $verifyEntry? and $verifyEntry != null then @$verifyEntry.$AmmoTable.keys.count else null"/>
+              <set_value name="$verifyUnitCount" exact="if $verifyEntry? and $verifyEntry != null then @$verifyEntry.$UnitTable.keys.count else null"/>
+              <debug_text text="'[GT-Maintenance] STORAGE VERIFY for ' + $ship.idcode + ': entry=' + (if $verifyEntry? and $verifyEntry != null then 'present' else 'NULL') + ', $AmmoTable.keys.count=' + $verifyAmmoCount + ', $UnitTable.keys.count=' + $verifyUnitCount" chance="100"/>
+              <remove_value name="$verifyEntry"/>
+              <remove_value name="$verifyAmmoCount"/>
+              <remove_value name="$verifyUnitCount"/>
+            </do_if>
             
             <!-- PERFORMANCE OPTIMIZATION: Defer UI operations (ship renaming, logbook messages) -->
             <do_if value="not global.$GT_DeferredUIUpdates?">

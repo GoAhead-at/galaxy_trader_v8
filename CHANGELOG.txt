@@ -1,6 +1,7 @@
 GalaxyTrader - Changelog
 ========================================
 
+
 Version 0.13.3 (2026-04-19)
 
 MK3 + MK4 trader pipeline:
@@ -37,6 +38,26 @@ FIX: `autoDeployResourceProbes` no longer turns the miner into a scout-only — 
 FIX: Probe restock no longer routes through vanilla `'resupply'` / `interrupt.restock` (miner-class ships have no loadout entry for `deployablecategory.resourceprobe`, so vanilla restock silently dropped probes). Routine now signals GT's own `GT_DoMaintenance` pipeline.
 FIX: Maintenance probe-need check lifted OUT of the `pilotLevel >= 15` defensive-equipment gate so low-skill miners can also restock probes. Probe quantity reads from `global.$GT_AIParameters.{ship}.$MaxResourceProbesToBuy` (with `$ship.defaultorder.$maxResourceProbesToBuy` fallback) and is clamped to the deployable bay.
 FIX: Galaxy Miner gains the missing RESUPPLY EXECUTOR block in `main_loop`. Maintenance was building the shopping list and stashing it on `global.$GT_ResupplyOrders.{$ship}` but no AI script consumed it for miners — the ship never undocked. Mirrors the trader pattern: `find_dockingbay match_dock` -> `add_build_to_modify_ship` -> `GT_Maintenance_Complete` interrupt or 5min cooldown on failure.
+
+Backport from v9 (resource-detection-neutral fixes only; v9-specific scanner-API rework intentionally not ported because v8 targets the older X4 base game with `averagemaxyield` / `currentbestyield` / `minamount`):
+
+Assist / Fleet:
+FIX: Player-owned subordinates no longer get detached from a player commander when the player strips all orders + assignments from the commander. Vanilla `order.assist.xml` lines ~100-107 unconditionally cancels the subordinate's `Assist` default order in that case (subordinates in scout / searching-resources / standing-by states all detach because they aren't running an inherited child order). For player-owned, GT-controlled subordinates of a player ship commander, GT now intercepts that path, suppresses the `cancel_order`, logs `[GT-Assist-FLEET-PRESERVE]`, waits 10-20s, and `resume label="init"` so vanilla's existing interrupt handlers (`event_object_order_ready`, `event_object_commander_set`, `event_object_destroyed`, `event_object_abandoned`) re-evaluate when the commander gets a new order. Self-recovering and non-invasive for non-GT or NPC subordinates.
+
+Galaxy Miner:
+FIX: Capital miners missing the required collector unit category (`orecollector` for `waretransport.solid`, `gascollector` for `waretransport.liquid`) no longer get stuck in a UI-freezing `set_order_failed` loop. New outer-level pre-check in `order.trade.galaxyminer.xml` short-circuits the mining sub-order dispatch when the selected ware needs a collector the ship lacks: when GT AutoResupply is enabled it fires the same vanilla `'resupply'` (urgent) signal the routine would have fired plus `GT_DoMaintenance` (5min throttle), sets `commandaction.standingby`, and waits the demand-recheck interval; when AutoResupply is disabled it logs an actionable message instead of looping. Selected-ware-keyed (not ship-waretransport-keyed) so dual-bay ships aren't blocked when only one collector type is missing.
+FIX: CARGO-FIRST OVERRIDE - miner with cargo full of (e.g.) Silicon and a willing primary buyer no longer sits idle in overflow-wait when scoring picked a different ware. Pre-delivery scan picks the largest in-bay cargo ware that has a willing primary buyer; override fires only when the ship cannot mine productively this slice (no scoring winner, selected ware unreachable, or cargo full). Routes through the standard primary-delivery path so deficit / reservation accounting still applies. Ported from v9, simplified to use v8's single-table `$wareReachable` model.
+FIX: Full-cargo miners no longer fly off to "search resources" with no room to act on a find. Scout block is now gated on `cargo.free.all gt 0` so the ship sits and waits near home until a buyer drains the cargo (or the CARGO-FIRST OVERRIDE switches it to deliver). Also sets `commandaction.standingby` in the overflow-wait branch and in the no-selected-ware fallback when scout did not act, so the UI reflects reality instead of showing the stale "searching resources" carried over from script init.
+
+GT Maintenance:
+FIX: Capital miners now get their `orecollector` / `gascollector` drones restocked through the GT maintenance pipeline (`gt_maintenance.xml`). New `$needsCollectorDrones` detection in both the DoMaintenance preflight and the queue-safe execution context, hardened equipment-dock filter (`canbuildequipment` + `hasresourcesfor` on the collector ware itself - smaller equipment docks legitimately don't stock mining drones), and a post-preservation trim cascade (defense -> tower -> cargo -> repair) that frees slot space BEFORE the collector ware is appended to `$unittable` so the wharf doesn't truncate the collector entry on full bays. Updates the human-readable restock summary too.
+FIX: Resupply order persistence. The chained-property storage form (`set_value name="global.$GT_ResupplyOrders.{$ship}.$AmmoTable"`) does not reliably persist table-typed values across cue boundaries on the X4 build the mod targets - scalars persisted, but `$AmmoTable` / `$UnitTable` read back as `null` on the consumer side, causing `add_build_to_modify_ship` to install nothing and triggering the player-reported "change equipment -> undock -> change equipment again" loop. Storage now uses a single inline `table[...]` literal (the form the rest of the codebase uses for nested-table globals); every value is pre-coalesced to a non-null sentinel so the inline literal cannot silently truncate. Added a `STORAGE VERIFY` debug line so any future regression is caught at the source.
+
+Mining Routine:
+FIX: Defensive coalescing of `$miningbasket`, `$buyoffers`, `$sellspaces`, `$gatheringspaces`, `$probesectors`, `$warebasket` in the `FAIL_NO_BUYER` / `FAIL_EMPTY_BASKET` / `FAIL_NO_RESOURCE` / `NO_SECTOR_FOR_WARE` diagnostic blocks. These variables are only created in the gathering branch and were undefined (not just empty) on cycles where the ship arrived with cargo and the gathering branch was skipped, so the diag itself raised a `Property lookup failed` error on top of the legitimate failure being diagnosed.
+
+Tooling:
+NEW: `scripts/Validate-Xml.ps1` reusable XML well-formedness validator (accepts file/directory paths, returns proper exit codes). Replaces ad-hoc validation scripts.
 
 
 

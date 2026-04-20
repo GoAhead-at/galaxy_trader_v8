@@ -1848,4 +1848,30 @@
       </do_if>
     </on_abort>
   </add>
+
+  <replace sel='//aiscript[@name="order.assist"]/attention/actions/do_if[@value="not this.assignedcontrolled.commander.defaultorder and not this.assignedcontrolled.commander.orders.count"]'>
+    <do_if value="not this.assignedcontrolled.commander.defaultorder and not this.assignedcontrolled.commander.orders.count">
+      <set_value name="$gtFleetPreserve" exact="false"/>
+      <do_if value="this.assignedcontrolled.commander? and this.assignedcontrolled.commander.exists and this.assignedcontrolled.commander.isclass.ship and this.assignedcontrolled.commander.owner == faction.player">
+        <do_if value="(global.$GT_Ships? and global.$GT_Ships.{this.assignedcontrolled}?) or (global.$GT_Ship_State? and global.$GT_Ship_State.{this.assignedcontrolled}? and @global.$GT_Ship_State.{this.assignedcontrolled}.$HasGTOrder)">
+          <set_value name="$gtFleetPreserve" exact="true"/>
+        </do_if>
+      </do_if>
+      <do_if value="$gtFleetPreserve">
+        <do_if value="@global.$GT_GlobalSettings.$Debug.$EnableDebugLogging">
+          <debug_text text="'[GT-Assist-FLEET-PRESERVE] ' + this.assignedcontrolled.idcode + ' - subordinate kept attached to commander ' + this.assignedcontrolled.commander.idcode + ' while commander has no orders (player likely stripped commander orders); waiting for new commander order before re-inheriting.'" chance="100"/>
+        </do_if>
+        <wait min="10s" max="20s"/>
+        <resume label="init"/>
+      </do_if>
+      <do_else>
+        <debug_text text="'commander: %s %s %s %s does not use orders.'.[this.assignedcontrolled.commander.class, this.assignedcontrolled.commander.idcode, this.assignedcontrolled.commander.knownname, this.assignedcontrolled.commander]" filter="error"/>
+        <do_if value="@this.assignedcontrolled.defaultorder.id == 'Assist'">
+          <cancel_order order="this.assignedcontrolled.defaultorder"/>
+          <set_value name="$removeassignment"/>
+        </do_if>
+        <resume label="finish"/>
+      </do_else>
+    </do_if>
+  </replace>
 </diff> 
